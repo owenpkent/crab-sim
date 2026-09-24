@@ -1,0 +1,88 @@
+# Let git detect text and normalize to LF in the repo. No forced working-tree
+# EOL: this project gets opened on Windows too (Nimbus's vJoy/ViGEm/driver
+# stack is Windows-only) and the UE editor writes CRLF .ini files there.
+* text=auto
+
+# Scripts must keep the line endings their interpreter expects.
+*.sh   text eol=lf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Source and config: always text, always diffable.
+*.h        text
+*.hpp      text
+*.c        text
+*.cpp      text
+*.inl      text
+*.cs       text
+*.ini      text
+*.json     text
+*.md       text
+*.py       text
+*.usf      text
+*.ush      text
+*.uproject text
+*.uplugin  text
+
+# ---- Git LFS ----
+# Explicit extensions, no wildcards like Content/**: UEGitPlugin parses this
+# file to find lockable types and cannot expand globs.
+#
+# `lockable` is deliberately absent. It makes every matching file read-only
+# until `git lfs lock`, which is pure friction for one person. Run
+# Scripts/enable-locking.sh before a second contributor joins.
+
+# Unreal
+*.uasset  filter=lfs diff=lfs merge=lfs -text
+*.umap    filter=lfs diff=lfs merge=lfs -text
+*.ubulk   filter=lfs diff=lfs merge=lfs -text
+*.uexp    filter=lfs diff=lfs merge=lfs -text
+*.upk     filter=lfs diff=lfs merge=lfs -text
+*.locres  filter=lfs diff=lfs merge=lfs -text
+*.locmeta filter=lfs diff=lfs merge=lfs -text
+
+# Images
+*.png  filter=lfs diff=lfs merge=lfs -text
+*.jpg  filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text
+*.tga  filter=lfs diff=lfs merge=lfs -text
+*.tif  filter=lfs diff=lfs merge=lfs -text
+*.tiff filter=lfs diff=lfs merge=lfs -text
+*.exr  filter=lfs diff=lfs merge=lfs -text
+*.hdr  filter=lfs diff=lfs merge=lfs -text
+*.psd  filter=lfs diff=lfs merge=lfs -text
+*.ico  filter=lfs diff=lfs merge=lfs -text
+
+# Audio / video
+*.wav  filter=lfs diff=lfs merge=lfs -text
+*.mp3  filter=lfs diff=lfs merge=lfs -text
+*.ogg  filter=lfs diff=lfs merge=lfs -text
+*.flac filter=lfs diff=lfs merge=lfs -text
+*.mp4  filter=lfs diff=lfs merge=lfs -text
+*.mov  filter=lfs diff=lfs merge=lfs -text
+
+# DCC source art
+*.fbx    filter=lfs diff=lfs merge=lfs -text
+*.blend  filter=lfs diff=lfs merge=lfs -text
+*.abc    filter=lfs diff=lfs merge=lfs -text
+*.usd    filter=lfs diff=lfs merge=lfs -text
+*.usdc   filter=lfs diff=lfs merge=lfs -text
+*.usdz   filter=lfs diff=lfs merge=lfs -text
+*.glb    filter=lfs diff=lfs merge=lfs -text
+*.sbs    filter=lfs diff=lfs merge=lfs -text
+*.sbsar  filter=lfs diff=lfs merge=lfs -text
+SourceArt/**/*.obj filter=lfs diff=lfs merge=lfs -text
+
+# Fonts / archives / documents
+*.ttf filter=lfs diff=lfs merge=lfs -text
+*.otf filter=lfs diff=lfs merge=lfs -text
+*.zip filter=lfs diff=lfs merge=lfs -text
+*.7z  filter=lfs diff=lfs merge=lfs -text
+*.pdf filter=lfs diff=lfs merge=lfs -text
+
+# Documentation images stay in plain git so they render in the README and
+# cost no LFS bandwidth. Must come last: later rules win.
+docs/**/*.png  !filter !diff !merge -text
+docs/**/*.jpg  !filter !diff !merge -text
+docs/**/*.jpeg !filter !diff !merge -text

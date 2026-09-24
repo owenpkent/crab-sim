@@ -1,0 +1,93 @@
+# ---- Engine-generated, local-only. Never commit. ----
+Binaries/
+Intermediate/
+DerivedDataCache/
+Saved/
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# Build/ is generated except for icons and pak lists
+Build/*
+!Build/*/
+Build/*/**
+!Build/*/PakBlacklist*.txt
+!Build/**/*.ico
+
+# Baked lighting/nav data. Regenerated on build, large, churns every bake.
+*_BuiltData.uasset
+
+# Packaged output. Ship builds through releases, not the repo.
+/Packaged/
+/Dist/
+
+# ---- DO NOT ADD THESE. They look generated and are not. ----
+#   Content/__ExternalActors__/   One File Per Actor data. This IS your level.
+#   Content/__ExternalObjects__/  Same, for non-actor external objects.
+#   Platforms/                    Per-platform Config/Content overrides.
+
+# ---- Generated project files (GenerateProjectFiles.sh / .bat) ----
+.vs/
+.vscode/
+.idea/
+.kdev4/
+.vsconfig
+*.sln
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj
+*.xcworkspace
+/*.code-workspace
+/*.kdev4
+/*.workspace
+/*.pro
+/*.pri
+/Makefile
+/CMakeLists.txt
+/*CodeCompletionFolders.txt
+/*CodeLitePreProcessor.txt
+/*Includes.cmake
+/*Definitions.cmake
+/*Config.cmake
+
+# ---- Compiler output ----
+*.slo
+*.lo
+*.o
+*.obj
+*.gch
+*.pch
+*.so
+*.dylib
+*.dll
+*.lai
+*.la
+*.a
+*.lib
+*.exe
+*.out
+*.app
+*.ipa
+*.pdb
+*.debug
+*.sym
+
+# *.obj above means MSVC object files. Wavefront models live here instead.
+!SourceArt/**/*.obj
+
+# ---- Kit (plain CMake) ----
+/Kit/build/
+
+# ---- Tooling ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---- OS / editor noise ----
+.DS_Store
+Thumbs.db
+*.swp
+*~
