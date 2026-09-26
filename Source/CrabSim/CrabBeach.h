@@ -10,6 +10,7 @@ class UMaterialInterface;
 class UMaterialParameterCollection;
 class UProceduralMeshComponent;
 class UStaticMesh;
+class UMaterialInstanceDynamic;
 class UStaticMeshComponent;
 
 /** A hole in the sand the crab can dig into. Location is on the ground. */
@@ -19,6 +20,24 @@ struct FCrabBurrow
 	float Radius = 60.f;
 	/** Water this deep over the hole floods it and forces the crab out. */
 	float FloodDepth = 50.f;
+	/** Dug by the crab during the round, not part of the beach. */
+	bool bDug = false;
+};
+
+/** A patch of algae-rich mud the crab can sift for food. Location is on the ground. */
+struct FCrabFoodPatch
+{
+	FVector Location = FVector::ZeroVector;
+	/** The drawn patch, and how far the crab may stray from its centre and keep feeding, uu. */
+	float Radius = 130.f;
+	/** A click this close to the centre is a click on the patch, uu. Generous on purpose. */
+	float ClickRadius = 200.f;
+	/** What the patch holds now, 0 to 1. */
+	float Richness = 1.f;
+	/** What the tide refills it to. Low flats are richer, high ones poorer. */
+	float FullRichness = 1.f;
+	/** Under water since it was last fresh. It refills when the water leaves. */
+	bool bSoaked = false;
 };
 
 /**
@@ -71,8 +90,32 @@ public:
 
 	bool IsBurrowFlooded(int32 Index) const;
 
-	/** The highest burrow, the last to flood. INDEX_NONE if there are none. */
+	/** The highest of the beach's own burrows, the last to flood. Dug burrows do not count. INDEX_NONE if there are none. */
 	int32 FindSafestBurrow() const;
+
+	/** Distance (XY) from the point to the nearest burrow's centre. Huge when there are none. */
+	float GetNearestBurrowDistance(const FVector& Point) const;
+
+	int32 GetDugBurrowCount() const;
+
+	/**
+	 * Dig a new burrow at the point's XY, on the ground. Returns its index, or INDEX_NONE at the limit of
+	 * dug burrows. Whether the spot is fit to dig is the caller's rule (CrabDig).
+	 */
+	int32 AddDugBurrow(const FVector& Where);
+
+	// --- Food ---------------------------------------------------------------
+
+	const TArray<FCrabFoodPatch>& GetFoodPatches() const { return FoodPatches; }
+
+	/** The nearest patch whose click radius holds the point (XY only), or INDEX_NONE. */
+	int32 FindFoodPatchAt(const FVector& Point) const;
+
+	/** Distance (XY) from the point to the nearest patch's centre. Huge when there are none. */
+	float GetNearestFoodPatchDistance(const FVector& Point) const;
+
+	/** Take up to Amount of richness from a patch. Returns what it gave, never more than it held. */
+	float TakeFood(int32 Index, float Amount);
 
 	/** The generated meshes, for tests and tooling. Null before BeginPlay. */
 	UProceduralMeshComponent* GetTerrainMesh() const { return Terrain; }
@@ -99,7 +142,11 @@ private:
 	void BuildTerrain();
 	void BuildWater();
 	void BuildBurrows();
+	void BuildFoodPatches();
 	void BuildProps();
+	void AddBurrowVisual(const FVector& Location);
+	void UpdateFoodPatches();
+	void RefreshPatchVisual(int32 Index);
 	void PushTideToMaterials();
 
 	UStaticMeshComponent* AddShape(UStaticMesh* Mesh, const FVector& Location, const FRotator& Rotation, const FVector& Scale,
@@ -123,5 +170,16 @@ private:
 	TArray<TObjectPtr<UStaticMeshComponent>> Shapes;
 
 	TArray<FCrabBurrow> Burrows;
+
+	/** What a patch looks like on the mud: flat mats and pellets that dull and thin as the patch runs out. */
+	struct FPatchVisual
+	{
+		TArray<UStaticMeshComponent*> Pellets;
+		UMaterialInstanceDynamic* Mats = nullptr;
+		float ShownRichness = -1.f;
+	};
+
+	TArray<FCrabFoodPatch> FoodPatches;
+	TArray<FPatchVisual> PatchVisuals;
 	float TideClock = 0.f;
 };

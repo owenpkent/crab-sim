@@ -3,6 +3,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "CrabDigMath.h"
+#include "CrabFoodMath.h"
 #include "CrabPawn.generated.h"
 
 class ACrabBeach;
@@ -26,8 +28,8 @@ enum class ECrabAnim : uint8
 /**
  * The player's crab. Walks toward a target point and scuttles: it turns so a
  * side faces the way it travels, and side-on travel is faster than forward
- * travel. It can dash, dance, dig into a burrow, and it has to keep its grip
- * against the tide. The visual is the skeletal fiddler crab from /Game/Crab
+ * travel. It can dash, dance, dig into a burrow, sift food patches, dig new
+ * burrows, and it has to keep its grip against the tide. The visual is the skeletal fiddler crab from /Game/Crab
  * when that exists, and a crab built from engine basic shapes when it does not.
  */
 UCLASS()
@@ -45,9 +47,10 @@ public:
 
 	/**
 	 * Walk toward this point. Height is ignored. Keeps walking until it arrives or is cleared.
-	 * With a burrow index the crab digs in when it gets there.
+	 * With a burrow index the crab digs in when it gets there, with a food patch index it starts
+	 * feeding. Any new target stops feeding and cancels a dig, except the patch it is already feeding on.
 	 */
-	void SetMoveTarget(const FVector& WorldPoint, int32 EnterBurrowIndex = INDEX_NONE);
+	void SetMoveTarget(const FVector& WorldPoint, int32 EnterBurrowIndex = INDEX_NONE, int32 FeedPatchIndex = INDEX_NONE);
 	void ClearMoveTarget();
 	bool HasMoveTarget() const { return bHasTarget; }
 	FVector GetMoveTarget() const { return MoveTarget; }
@@ -77,6 +80,34 @@ public:
 	int32 GetCurrentBurrow() const { return CurrentBurrow; }
 	/** 0 standing on the sand, 1 fully underground. */
 	float GetBurrowSink() const { return BurrowSink; }
+
+	// --- Food -----------------------------------------------------------------
+
+	/** 0 empty, 1 full. Low food only stops the crab digging. */
+	float GetFood() const { return Food; }
+	void SetFood(float NewFood);
+
+	/**
+	 * Sift a food patch where the crab stands. False, with a message, if the patch is bare, the crab is
+	 * full, or it is not on the patch. The food moves from the patch into the crab while it stands still.
+	 */
+	bool StartFeeding(int32 PatchIndex);
+	void StopFeeding();
+	bool IsFeeding() const { return FeedingPatch != INDEX_NONE; }
+	int32 GetFeedingPatch() const { return FeedingPatch; }
+
+	// --- Digging ----------------------------------------------------------------
+
+	/** Ok if the crab could start digging a burrow right here, otherwise why not. */
+	CrabDig::EResult CheckDig() const;
+
+	/** Start digging a burrow where the crab stands. False, with a message, if CheckDig refuses. Stops a walk, dash, dance or feed. */
+	bool StartDig();
+	/** Give up the dig. It costs nothing. */
+	void CancelDig(const TCHAR* Reason = TEXT("moved"));
+	bool IsDigging() const { return bDigging; }
+	/** 0 to 1 through the dig. */
+	float GetDigProgress() const { return bDigging ? CrabDig::Progress(DigElapsed) : 0.f; }
 
 	// --- Survival -------------------------------------------------------------
 
@@ -139,13 +170,18 @@ private:
 	void UpdateSurvival(float DeltaSeconds);
 	void UpdateBurrowSink(float DeltaSeconds);
 	void UpdateWalking(float DeltaSeconds);
+	void UpdateForaging(float DeltaSeconds);
 	void UpdateAnimation(float DeltaSeconds);
 	void UpdateProceduralDance(float DeltaSeconds);
+	void UpdateWorkPose(float DeltaSeconds);
+	/** Stop feeding and say why on the HUD. */
+	void EndFeeding(const TCHAR* Text);
+	void FinishDig();
 	void SetAnimState(ECrabAnim NewState);
 	void SweepOut();
 	/** Show a line on the HUD. With bReplaceCurrent false it waits its turn: it is dropped if another message is still showing. */
 	void SetMessage(const FString& Text, float Seconds = 2.5f, bool bReplaceCurrent = true);
-	void LogEvent(const TCHAR* Name) const;
+	void LogEvent(const TCHAR* Name, const FString& Detail = FString()) const;
 	void LogState() const;
 	static const TCHAR* AnimName(ECrabAnim State);
 
@@ -187,7 +223,10 @@ private:
 	bool bHasTarget = false;
 	bool bDancing = false;
 	bool bUseSkeletalMesh = false;
+	bool bDigging = false;
 	int32 PendingBurrow = INDEX_NONE;
+	int32 PendingPatch = INDEX_NONE;
+	int32 FeedingPatch = INDEX_NONE;
 	int32 CurrentBurrow = INDEX_NONE;
 	int32 SweptCount = 0;
 	int32 SurgeCount = 0;
@@ -195,6 +234,12 @@ private:
 	float DashCooldownRemaining = 0.f;
 	float StateLogTimer = 0.f;
 	float Grip = 1.f;
+	float Food = CrabFood::StartFood;
+	float FeedGained = 0.f;
+	float DigElapsed = 0.f;
+	float FeedBlend = 0.f;
+	float DigBlend = 0.f;
+	float WorkClock = 0.f;
 	float WaterDepth = 0.f;
 	float BurrowSink = 0.f;
 	float DanceClock = 0.f;

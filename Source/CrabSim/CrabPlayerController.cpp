@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CrabPlayerController.h"
 #include "CrabBeach.h"
+#include "CrabHudMath.h"
 #include "CrabPawn.h"
 
 #include "CrabSim.h"
@@ -56,10 +57,11 @@ bool ACrabPlayerController::GetCursorGroundPoint(FVector& OutPoint) const
 	return true;
 }
 
-void ACrabPlayerController::ResolveTarget(const ACrabPawn& Crab, const FVector& Point, FVector& OutTarget, int32& OutBurrow) const
+void ACrabPlayerController::ResolveTarget(const ACrabPawn& Crab, const FVector& Point, FVector& OutTarget, int32& OutBurrow, int32& OutPatch) const
 {
 	OutTarget = Point;
 	OutBurrow = INDEX_NONE;
+	OutPatch = INDEX_NONE;
 	if (const ACrabBeach* Beach = Crab.GetBeach())
 	{
 		const int32 Burrow = Beach->FindBurrowNear(Point, BurrowClickRadius);
@@ -67,6 +69,13 @@ void ACrabPlayerController::ResolveTarget(const ACrabPawn& Crab, const FVector& 
 		{
 			OutBurrow = Burrow;
 			OutTarget = Beach->GetBurrows()[Burrow].Location;
+			return;
+		}
+		const int32 Patch = Beach->FindFoodPatchAt(Point);
+		if (Patch != INDEX_NONE)
+		{
+			OutPatch = Patch;
+			OutTarget = Beach->GetFoodPatches()[Patch].Location;
 		}
 	}
 }
@@ -89,7 +98,9 @@ void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 	{
 		FVector Unused;
 		int32 Burrow = INDEX_NONE;
-		ResolveTarget(Crab, Point, Unused, Burrow);
+		int32 Patch = INDEX_NONE;
+		ResolveTarget(Crab, Point, Unused, Burrow, Patch);
+		// The crab itself beats the patch it stands on: a click on the crab is a dance, not a feed.
 		if (Burrow == INDEX_NONE && FVector::Dist2D(Point, Crab.GetActorLocation()) <= DanceClickRadius)
 		{
 			Crab.ToggleDance();
@@ -101,8 +112,24 @@ void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 	Crab.StopDance();
 	FVector Target;
 	int32 Burrow = INDEX_NONE;
-	ResolveTarget(Crab, Point, Target, Burrow);
-	Crab.SetMoveTarget(Target, Burrow);
+	int32 Patch = INDEX_NONE;
+	ResolveTarget(Crab, Point, Target, Burrow, Patch);
+	Crab.SetMoveTarget(Target, Burrow, Patch);
+}
+
+void ACrabPlayerController::HandleLeftPress(ACrabPawn& Crab, const FVector2D& ScreenPos, const FVector2D& ViewSize, const FVector* GroundPoint)
+{
+	if (CrabHud::HitsDigButton(ViewSize.X, ViewSize.Y, ScreenPos))
+	{
+		Crab.StartDig();
+		bSwallowHold = true;
+		return;
+	}
+	if (GroundPoint)
+	{
+		bSwallowHold = false;
+		HandleClick(Crab, *GroundPoint);
+	}
 }
 
 void ACrabPlayerController::HandleHold(ACrabPawn& Crab, const FVector& Point)
@@ -123,8 +150,9 @@ void ACrabPlayerController::HandleHold(ACrabPawn& Crab, const FVector& Point)
 
 	FVector Target;
 	int32 Burrow = INDEX_NONE;
-	ResolveTarget(Crab, Point, Target, Burrow);
-	Crab.SetMoveTarget(Target, Burrow);
+	int32 Patch = INDEX_NONE;
+	ResolveTarget(Crab, Point, Target, Burrow, Patch);
+	Crab.SetMoveTarget(Target, Burrow, Patch);
 }
 
 void ACrabPlayerController::LogScreenPositions(float DeltaTime)
@@ -164,7 +192,13 @@ void ACrabPlayerController::LogScreenPositions(float DeltaTime)
 		{
 			Line += FString::Printf(TEXT(" burrow%d=%s"), Index, *Pixels(Beach->GetBurrows()[Index].Location));
 		}
+		for (int32 Index = 0; Index < Beach->GetFoodPatches().Num(); ++Index)
+		{
+			Line += FString::Printf(TEXT(" patch%d=%s"), Index, *Pixels(Beach->GetFoodPatches()[Index].Location));
+		}
 	}
+	const FVector2D DigCentre = CrabHud::DigButtonRect(ViewX, ViewY).GetCenter();
+	Line += FString::Printf(TEXT(" dig=%.0f,%.0f"), DigCentre.X, DigCentre.Y);
 	UE_LOG(LogCrabSim, Log, TEXT("%s"), *Line);
 }
 
@@ -187,21 +221,35 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 	FVector Point;
 	const bool bHavePoint = GetCursorGroundPoint(Point);
 
-	if (bHavePoint)
+	float MouseX = 0.f;
+	float MouseY = 0.f;
+	int32 ViewX = 0;
+	int32 ViewY = 0;
+	const bool bHaveMouse = GetMousePosition(MouseX, MouseY);
+	GetViewportSize(ViewX, ViewY);
+	const FVector2D Screen(MouseX, MouseY);
+	const FVector2D View(ViewX, ViewY);
+
+	if (WasInputKeyJustPressed(EKeys::LeftMouseButton) && bHaveMouse)
 	{
+		HandleLeftPress(*Crab, Screen, View, bHavePoint ? &Point : nullptr);
+	}
+	else if (bHavePoint)
+	{
+		// The cursor over the dig button is over the button, not over the ground behind it.
 		if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
 		{
 			bSwallowHold = false;
 			HandleClick(*Crab, Point);
 		}
-		else if (IsInputKeyDown(EKeys::LeftMouseButton))
+		else if (IsInputKeyDown(EKeys::LeftMouseButton) && !(bHaveMouse && CrabHud::HitsDigButton(View.X, View.Y, Screen)))
 		{
 			HandleHold(*Crab, Point);
 		}
+	}
 
-		if (WasInputKeyJustPressed(EKeys::RightMouseButton))
-		{
-			Crab->TryDash(Point);
-		}
+	if (bHavePoint && WasInputKeyJustPressed(EKeys::RightMouseButton))
+	{
+		Crab->TryDash(Point);
 	}
 }

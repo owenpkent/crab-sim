@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CrabBeach.h"
+#include "CrabDigMath.h"
+#include "CrabFoodMath.h"
 #include "CrabSim.h"
 #include "CrabTerrainMath.h"
 
@@ -50,10 +52,16 @@ namespace
 	const FLinearColor WaterColor = FLinearColor(0.04f, 0.3f, 0.34f);
 	const FLinearColor BurrowColor = FLinearColor(0.02f, 0.015f, 0.01f);
 	const FLinearColor RimColor = FLinearColor(0.5f, 0.38f, 0.18f);
+	const FLinearColor PatchRichColor = FLinearColor(0.1f, 0.26f, 0.04f);
+	const FLinearColor PatchBareColor = FLinearColor(0.36f, 0.27f, 0.15f);
+	const FLinearColor PelletColor = FLinearColor(0.28f, 0.42f, 0.08f);
 
 	constexpr float ClearRadiusAtStart = 600.f;
 	constexpr float ClearRadiusAtBurrow = 350.f;
+	constexpr float ClearRadiusAtPatch = 250.f;
 	constexpr float BurrowRadius = 60.f;
+	constexpr int32 PatchMatCount = 9;
+	constexpr int32 PatchPelletCount = 8;
 
 	/** Positions of a 1D grid: fine spacing across [FineMin, FineMax], growing coarser out to [Min, Max]. */
 	TArray<float> BuildAxis(float Min, float Max, float FineMin, float FineMax, float FineStep, float Growth)
@@ -171,6 +179,7 @@ void ACrabBeach::BeginPlay()
 	BuildTerrain();
 	BuildWater();
 	BuildBurrows();
+	BuildFoodPatches();
 	BuildProps();
 	PushTideToMaterials();
 }
@@ -183,6 +192,7 @@ void ACrabBeach::SetTideClock(float Seconds)
 		Water->SetWorldLocation(FVector(0.f, 0.f, GetSurfaceLevel()));
 	}
 	PushTideToMaterials();
+	UpdateFoodPatches();
 }
 
 void ACrabBeach::Tick(float DeltaSeconds)
@@ -194,6 +204,7 @@ void ACrabBeach::Tick(float DeltaSeconds)
 		Water->SetWorldLocation(FVector(0.f, 0.f, GetSurfaceLevel()));
 	}
 	PushTideToMaterials();
+	UpdateFoodPatches();
 }
 
 void ACrabBeach::PushTideToMaterials()
@@ -246,13 +257,129 @@ int32 ACrabBeach::FindSafestBurrow() const
 	float BestZ = -BIG_NUMBER;
 	for (int32 Index = 0; Index < Burrows.Num(); ++Index)
 	{
-		if (Burrows[Index].Location.Z > BestZ)
+		if (!Burrows[Index].bDug && Burrows[Index].Location.Z > BestZ)
 		{
 			BestZ = Burrows[Index].Location.Z;
 			Best = Index;
 		}
 	}
 	return Best;
+}
+
+float ACrabBeach::GetNearestBurrowDistance(const FVector& Point) const
+{
+	float Nearest = BIG_NUMBER;
+	for (const FCrabBurrow& Burrow : Burrows)
+	{
+		Nearest = FMath::Min(Nearest, static_cast<float>(FVector::Dist2D(Point, Burrow.Location)));
+	}
+	return Nearest;
+}
+
+int32 ACrabBeach::GetDugBurrowCount() const
+{
+	int32 Count = 0;
+	for (const FCrabBurrow& Burrow : Burrows)
+	{
+		Count += Burrow.bDug ? 1 : 0;
+	}
+	return Count;
+}
+
+int32 ACrabBeach::AddDugBurrow(const FVector& Where)
+{
+	if (GetDugBurrowCount() >= CrabDig::MaxDug)
+	{
+		return INDEX_NONE;
+	}
+	FCrabBurrow Burrow;
+	Burrow.Radius = BurrowRadius;
+	Burrow.bDug = true;
+	Burrow.Location = FVector(Where.X, Where.Y, CrabTerrain::Height(Where.X, Where.Y));
+	Burrows.Add(Burrow);
+	AddBurrowVisual(Burrow.Location);
+	return Burrows.Num() - 1;
+}
+
+int32 ACrabBeach::FindFoodPatchAt(const FVector& Point) const
+{
+	int32 Best = INDEX_NONE;
+	float BestDistance = BIG_NUMBER;
+	for (int32 Index = 0; Index < FoodPatches.Num(); ++Index)
+	{
+		const float Distance = FVector::Dist2D(Point, FoodPatches[Index].Location);
+		if (Distance <= FoodPatches[Index].ClickRadius && Distance < BestDistance)
+		{
+			BestDistance = Distance;
+			Best = Index;
+		}
+	}
+	return Best;
+}
+
+float ACrabBeach::GetNearestFoodPatchDistance(const FVector& Point) const
+{
+	float Nearest = BIG_NUMBER;
+	for (const FCrabFoodPatch& Patch : FoodPatches)
+	{
+		Nearest = FMath::Min(Nearest, static_cast<float>(FVector::Dist2D(Point, Patch.Location)));
+	}
+	return Nearest;
+}
+
+float ACrabBeach::TakeFood(int32 Index, float Amount)
+{
+	if (!FoodPatches.IsValidIndex(Index))
+	{
+		return 0.f;
+	}
+	FCrabFoodPatch& Patch = FoodPatches[Index];
+	const float Taken = FMath::Clamp(Amount, 0.f, Patch.Richness);
+	Patch.Richness -= Taken;
+	return Taken;
+}
+
+void ACrabBeach::UpdateFoodPatches()
+{
+	for (int32 Index = 0; Index < FoodPatches.Num(); ++Index)
+	{
+		FCrabFoodPatch& Patch = FoodPatches[Index];
+		if (CrabFood::IsSoaked(GetWaterDepthAt(Patch.Location.X, Patch.Location.Y)))
+		{
+			Patch.bSoaked = true;
+		}
+		else if (Patch.bSoaked)
+		{
+			// The tide has come and gone: the flats are fresh again.
+			Patch.bSoaked = false;
+			Patch.Richness = Patch.FullRichness;
+		}
+		RefreshPatchVisual(Index);
+	}
+}
+
+void ACrabBeach::RefreshPatchVisual(int32 Index)
+{
+	if (!FoodPatches.IsValidIndex(Index) || !PatchVisuals.IsValidIndex(Index))
+	{
+		return;
+	}
+	FPatchVisual& Visual = PatchVisuals[Index];
+	const float Richness = FoodPatches[Index].Richness;
+	if (FMath::IsNearlyEqual(Visual.ShownRichness, Richness, 0.005f))
+	{
+		return;
+	}
+	Visual.ShownRichness = Richness;
+	if (Visual.Mats)
+	{
+		Visual.Mats->SetVectorParameterValue(TEXT("Color"), FMath::Lerp(PatchBareColor, PatchRichColor, FMath::Clamp(Richness * 1.25f, 0.f, 1.f)));
+	}
+	const int32 Shown = FMath::CeilToInt(Visual.Pellets.Num() * FMath::Clamp(Richness, 0.f, 1.f));
+	for (int32 Pellet = 0; Pellet < Visual.Pellets.Num(); ++Pellet)
+	{
+		Visual.Pellets[Pellet]->SetVisibility(Pellet < Shown);
+	}
 }
 
 UStaticMeshComponent* ACrabBeach::AddShape(UStaticMesh* Mesh, const FVector& Location, const FRotator& Rotation, const FVector& Scale,
@@ -391,8 +518,6 @@ void ACrabBeach::BuildBurrows()
 		FVector2D(1900.f, -900.f),
 	};
 
-	UStaticMesh* Cylinder = LoadEngineShape(TEXT("Cylinder"));
-	UStaticMesh* Sphere = LoadEngineShape(TEXT("Sphere"));
 	Burrows.Reset();
 
 	for (const FVector2D& Spot : Spots)
@@ -401,19 +526,105 @@ void ACrabBeach::BuildBurrows()
 		Burrow.Radius = BurrowRadius;
 		Burrow.Location = FVector(Spot.X, Spot.Y, CrabTerrain::Height(Spot.X, Spot.Y));
 		Burrows.Add(Burrow);
+		AddBurrowVisual(Burrow.Location);
+	}
+}
 
-		const FVector Normal = CrabTerrain::Normal(Spot.X, Spot.Y);
-		const FRotator Tilt = FRotationMatrix::MakeFromZ(Normal).Rotator();
-		AddShape(Cylinder, Burrow.Location + Normal * 2.f, Tilt, FVector(1.5f, 1.5f, 0.02f), &BurrowColor, false);
+void ACrabBeach::AddBurrowVisual(const FVector& Location)
+{
+	UStaticMesh* Cylinder = LoadEngineShape(TEXT("Cylinder"));
+	UStaticMesh* Sphere = LoadEngineShape(TEXT("Sphere"));
 
-		// A low rim of sand thrown up around the hole.
-		for (int32 Lump = 0; Lump < 10; ++Lump)
+	const FVector Normal = CrabTerrain::Normal(Location.X, Location.Y);
+	const FRotator Tilt = FRotationMatrix::MakeFromZ(Normal).Rotator();
+	AddShape(Cylinder, Location + Normal * 2.f, Tilt, FVector(1.5f, 1.5f, 0.02f), &BurrowColor, false);
+
+	// A low rim of sand thrown up around the hole.
+	for (int32 Lump = 0; Lump < 10; ++Lump)
+	{
+		const float Angle = 2.f * PI * Lump / 10.f;
+		const float RimX = Location.X + FMath::Cos(Angle) * 78.f;
+		const float RimY = Location.Y + FMath::Sin(Angle) * 78.f;
+		AddShape(Sphere, FVector(RimX, RimY, CrabTerrain::Height(RimX, RimY) + 2.f), FRotator::ZeroRotator, FVector(0.36f, 0.36f, 0.14f), &RimColor, false);
+	}
+}
+
+void ACrabBeach::BuildFoodPatches()
+{
+	// Mid to low flats. The low ones flood early and are richer, the high ones stay dry longer and are poorer.
+	struct FSpec { float X; float Y; float Richness; };
+	const FSpec Specs[] = {
+		{-1300.f, 450.f, 0.40f},
+		{-650.f, 520.f, 0.45f},
+		{-350.f, -700.f, 0.60f},
+		{600.f, -650.f, 0.75f},
+		{1150.f, -80.f, 0.80f},
+		{1700.f, -420.f, 0.90f},
+		{1800.f, 850.f, 1.00f},
+	};
+
+	UStaticMesh* Cylinder = LoadEngineShape(TEXT("Cylinder"));
+	UStaticMesh* Sphere = LoadEngineShape(TEXT("Sphere"));
+	UMaterialInstanceDynamic* PelletMaterial = nullptr;
+	if (BasicMaterial)
+	{
+		PelletMaterial = UMaterialInstanceDynamic::Create(BasicMaterial, this);
+		PelletMaterial->SetVectorParameterValue(TEXT("Color"), PelletColor);
+	}
+
+	FoodPatches.Reset();
+	PatchVisuals.Reset();
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(Specs); ++Index)
+	{
+		const FSpec& Spec = Specs[Index];
+		FCrabFoodPatch Patch;
+		Patch.Location = FVector(Spec.X, Spec.Y, CrabTerrain::Height(Spec.X, Spec.Y));
+		Patch.Richness = Spec.Richness;
+		Patch.FullRichness = Spec.Richness;
+		FoodPatches.Add(Patch);
+
+		FPatchVisual Visual;
+		if (BasicMaterial)
 		{
-			const float Angle = 2.f * PI * Lump / 10.f;
-			const float RimX = Spot.X + FMath::Cos(Angle) * 78.f;
-			const float RimY = Spot.Y + FMath::Sin(Angle) * 78.f;
-			AddShape(Sphere, FVector(RimX, RimY, CrabTerrain::Height(RimX, RimY) + 2.f), FRotator::ZeroRotator, FVector(0.36f, 0.36f, 0.14f), &RimColor, false);
+			Visual.Mats = UMaterialInstanceDynamic::Create(BasicMaterial, this);
 		}
+
+		FRandomStream Random(Seed * 31 + Index);
+		// Flat mats of algae, small ones so each follows the ground it lies on.
+		for (int32 Mat = 0; Mat < PatchMatCount; ++Mat)
+		{
+			const float Angle = 2.f * PI * (Mat + Random.FRandRange(0.f, 0.6f)) / PatchMatCount;
+			const float Reach = Mat == 0 ? 0.f : Random.FRandRange(0.3f, 0.75f) * Patch.Radius;
+			const float MatX = Spec.X + FMath::Cos(Angle) * Reach;
+			const float MatY = Spec.Y + FMath::Sin(Angle) * Reach;
+			const float Size = Random.FRandRange(0.7f, 1.1f);
+			const FVector Normal = CrabTerrain::Normal(MatX, MatY);
+			const FVector Where(MatX, MatY, CrabTerrain::Height(MatX, MatY) + 1.5f + 0.2f * Mat);
+			UStaticMeshComponent* Shape = AddShape(Cylinder, Where + Normal * 0.5f, FRotationMatrix::MakeFromZ(Normal).Rotator(),
+				FVector(Size, Size * Random.FRandRange(0.8f, 1.2f), 0.015f), nullptr, false);
+			if (Visual.Mats)
+			{
+				Shape->SetMaterial(0, Visual.Mats);
+			}
+		}
+		// Pellets on top: the rich ones fade out as the patch is eaten.
+		for (int32 Pellet = 0; Pellet < PatchPelletCount; ++Pellet)
+		{
+			const float Angle = Random.FRandRange(0.f, 2.f * PI);
+			const float Reach = FMath::Sqrt(Random.FRand()) * 0.85f * Patch.Radius;
+			const float PelletX = Spec.X + FMath::Cos(Angle) * Reach;
+			const float PelletY = Spec.Y + FMath::Sin(Angle) * Reach;
+			const float Size = Random.FRandRange(0.18f, 0.3f);
+			UStaticMeshComponent* Shape = AddShape(Sphere, FVector(PelletX, PelletY, CrabTerrain::Height(PelletX, PelletY) + 3.f),
+				FRotator::ZeroRotator, FVector(Size, Size, 0.1f), nullptr, false);
+			if (PelletMaterial)
+			{
+				Shape->SetMaterial(0, PelletMaterial);
+			}
+			Visual.Pellets.Add(Shape);
+		}
+		PatchVisuals.Add(Visual);
+		RefreshPatchVisual(Index);
 	}
 }
 
@@ -470,6 +681,13 @@ void ACrabBeach::BuildProps()
 		for (const FCrabBurrow& Burrow : Burrows)
 		{
 			if (FVector2D::Distance(Spot, FVector2D(Burrow.Location.X, Burrow.Location.Y)) < ClearRadiusAtBurrow + Radius)
+			{
+				return false;
+			}
+		}
+		for (const FCrabFoodPatch& Patch : FoodPatches)
+		{
+			if (FVector2D::Distance(Spot, FVector2D(Patch.Location.X, Patch.Location.Y)) < ClearRadiusAtPatch + Radius)
 			{
 				return false;
 			}

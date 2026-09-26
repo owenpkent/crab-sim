@@ -305,9 +305,11 @@ void ACrabPawn::SetMessage(const FString& Text, float Seconds, bool bReplaceCurr
 	MessageTimeRemaining = MessageDuration;
 }
 
-void ACrabPawn::LogEvent(const TCHAR* Name) const
+void ACrabPawn::LogEvent(const TCHAR* Name, const FString& Detail) const
 {
-	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_EVENT %s t=%.2f"), Name, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f);
+	// The live tests read the name and t=. Anything after t= is detail for a person.
+	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_EVENT %s t=%.2f%s%s"), Name, GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f,
+		Detail.IsEmpty() ? TEXT("") : TEXT(" "), *Detail);
 }
 
 const TCHAR* ACrabPawn::AnimName(ECrabAnim State)
@@ -323,15 +325,23 @@ const TCHAR* ACrabPawn::AnimName(ECrabAnim State)
 
 // --- Walking ---------------------------------------------------------------
 
-void ACrabPawn::SetMoveTarget(const FVector& WorldPoint, int32 EnterBurrowIndex)
+void ACrabPawn::SetMoveTarget(const FVector& WorldPoint, int32 EnterBurrowIndex, int32 FeedPatchIndex)
 {
 	// A crab in its burrow stays put until it is told to come out (ExitBurrow).
 	if (IsInBurrow())
 	{
 		return;
 	}
+	// Holding the button on the patch it is already sifting keeps it sifting.
+	if (FeedPatchIndex != INDEX_NONE && FeedPatchIndex == FeedingPatch && EnterBurrowIndex == INDEX_NONE)
+	{
+		return;
+	}
+	CancelDig();
+	StopFeeding();
 	MoveTarget = FVector(WorldPoint.X, WorldPoint.Y, GetFeetZ());
 	PendingBurrow = EnterBurrowIndex;
+	PendingPatch = FeedPatchIndex;
 	bHasTarget = true;
 	TargetMarker->SetWorldLocation(MoveTarget + FVector(0.f, 0.f, 3.f));
 	TargetMarker->SetHiddenInGame(false);
@@ -341,6 +351,7 @@ void ACrabPawn::ClearMoveTarget()
 {
 	bHasTarget = false;
 	PendingBurrow = INDEX_NONE;
+	PendingPatch = INDEX_NONE;
 	TargetMarker->SetHiddenInGame(true);
 }
 
@@ -360,6 +371,8 @@ bool ACrabPawn::TryDash(const FVector& TowardWorldPoint)
 
 	ExitBurrow();
 	StopDance();
+	StopFeeding();
+	CancelDig();
 
 	DashDirection = Direction;
 	DashTimeRemaining = DashDuration;
@@ -388,6 +401,8 @@ bool ACrabPawn::StartDance()
 		return false;
 	}
 	ClearMoveTarget();
+	StopFeeding();
+	CancelDig();
 	bDancing = true;
 	DanceClock = 0.f;
 	LogEvent(TEXT("dance_start"));
@@ -431,6 +446,8 @@ bool ACrabPawn::EnterBurrow(int32 BurrowIndex)
 
 	const FCrabBurrow& Burrow = Beach->GetBurrows()[BurrowIndex];
 	StopDance();
+	StopFeeding();
+	CancelDig();
 	ClearMoveTarget();
 	DashTimeRemaining = 0.f;
 
@@ -482,12 +499,203 @@ void ACrabPawn::UpdateBurrowSink(float DeltaSeconds)
 	}
 }
 
+// --- Food -----------------------------------------------------------------------------
+
+void ACrabPawn::SetFood(float NewFood)
+{
+	Food = FMath::Clamp(NewFood, 0.f, 1.f);
+}
+
+bool ACrabPawn::StartFeeding(int32 PatchIndex)
+{
+	const ACrabBeach* Beach = GetBeach();
+	if (!Beach || !Beach->GetFoodPatches().IsValidIndex(PatchIndex))
+	{
+		return false;
+	}
+	if (PatchIndex == FeedingPatch)
+	{
+		return true;
+	}
+	if (IsInBurrow() || IsDashing() || bDancing || bDigging || WaterDepth > CrabSurvival::SurgeDepth)
+	{
+		return false;
+	}
+
+	const FCrabFoodPatch& Patch = Beach->GetFoodPatches()[PatchIndex];
+	if (FVector::Dist2D(GetActorLocation(), Patch.Location) > Patch.Radius)
+	{
+		return false;
+	}
+	if (CrabFood::IsEmpty(Patch.Richness))
+	{
+		SetMessage(TEXT("Patch empty"));
+		return false;
+	}
+	if (CrabFood::IsFull(Food))
+	{
+		SetMessage(TEXT("Not hungry"));
+		return false;
+	}
+
+	StopFeeding();
+	FeedingPatch = PatchIndex;
+	FeedGained = 0.f;
+	LogEvent(TEXT("food_begin"), FString::Printf(TEXT("patch=%d richness=%.2f food=%.3f"), PatchIndex, Patch.Richness, Food));
+	return true;
+}
+
+void ACrabPawn::StopFeeding()
+{
+	if (FeedingPatch == INDEX_NONE)
+	{
+		return;
+	}
+	const int32 Patch = FeedingPatch;
+	FeedingPatch = INDEX_NONE;
+	LogEvent(TEXT("food_end"), FString::Printf(TEXT("patch=%d amount=%.3f food=%.3f"), Patch, FeedGained, Food));
+}
+
+void ACrabPawn::EndFeeding(const TCHAR* Text)
+{
+	StopFeeding();
+	SetMessage(Text);
+}
+
+// --- Digging ------------------------------------------------------------------------------
+
+CrabDig::EResult ACrabPawn::CheckDig() const
+{
+	const ACrabBeach* Beach = GetBeach();
+	if (!Beach)
+	{
+		return CrabDig::EResult::NoGround;
+	}
+
+	const FVector Location = GetActorLocation();
+	CrabDig::FSpot Spot;
+	Spot.Food = Food;
+	Spot.WaterDepth = IsInBurrow() ? 0.f : Beach->GetWaterDepthAt(Location.X, Location.Y);
+	Spot.bInSurge = bWasInSurge;
+	Spot.bInBurrow = IsInBurrow();
+	Spot.DugCount = Beach->GetDugBurrowCount();
+	Spot.NearestBurrowDistance = Beach->GetNearestBurrowDistance(Location);
+	Spot.NearestPatchDistance = Beach->GetNearestFoodPatchDistance(Location);
+	return CrabDig::Evaluate(Spot);
+}
+
+bool ACrabPawn::StartDig()
+{
+	if (bDigging)
+	{
+		return true;
+	}
+	const CrabDig::EResult Result = CheckDig();
+	if (Result != CrabDig::EResult::Ok)
+	{
+		SetMessage(FString::Printf(TEXT("Cannot dig: %s"), CrabDig::ReasonText(Result)));
+		return false;
+	}
+
+	StopDance();
+	StopFeeding();
+	ClearMoveTarget();
+	DashTimeRemaining = 0.f;
+	bDigging = true;
+	DigElapsed = 0.f;
+	LogEvent(TEXT("dig_begin"), FString::Printf(TEXT("food=%.3f"), Food));
+	return true;
+}
+
+void ACrabPawn::CancelDig(const TCHAR* Reason)
+{
+	if (!bDigging)
+	{
+		return;
+	}
+	bDigging = false;
+	DigElapsed = 0.f;
+	SetMessage(TEXT("Dig cancelled"));
+	LogEvent(TEXT("dig_cancel"), FString::Printf(TEXT("reason=%s"), Reason));
+}
+
+void ACrabPawn::FinishDig()
+{
+	ACrabBeach* Beach = GetBeach();
+	const int32 Index = Beach ? Beach->AddDugBurrow(GetActorLocation()) : INDEX_NONE;
+	if (Index == INDEX_NONE)
+	{
+		CancelDig(TEXT("no room"));
+		return;
+	}
+	bDigging = false;
+	DigElapsed = 0.f;
+	Food = FMath::Max(Food - CrabDig::FoodCost, 0.f);
+	SetMessage(TEXT("Burrow dug"));
+	LogEvent(TEXT("dig_done"), FString::Printf(TEXT("burrow=%d dug=%d food=%.3f"), Index, Beach->GetDugBurrowCount(), Food));
+}
+
+void ACrabPawn::UpdateForaging(float DeltaSeconds)
+{
+	Food = CrabFood::FoodAfterDrain(Food, DeltaSeconds);
+
+	ACrabBeach* Beach = GetBeach();
+	if (!Beach)
+	{
+		StopFeeding();
+		CancelDig(TEXT("no ground"));
+		return;
+	}
+
+	if (IsFeeding())
+	{
+		const FCrabFoodPatch* Patch = Beach->GetFoodPatches().IsValidIndex(FeedingPatch) ? &Beach->GetFoodPatches()[FeedingPatch] : nullptr;
+		if (!Patch || IsInBurrow() || IsDashing() || bDancing || FVector::Dist2D(GetActorLocation(), Patch->Location) > Patch->Radius + 40.f)
+		{
+			StopFeeding();
+		}
+		else
+		{
+			const float Moved = Beach->TakeFood(FeedingPatch, CrabFood::FeedTransfer(Patch->Richness, Food, DeltaSeconds));
+			Food = FMath::Min(Food + Moved, 1.f);
+			FeedGained += Moved;
+			if (CrabFood::IsEmpty(Patch->Richness))
+			{
+				EndFeeding(TEXT("Patch empty"));
+			}
+			else if (CrabFood::IsFull(Food))
+			{
+				EndFeeding(TEXT("Fed"));
+			}
+		}
+	}
+
+	if (bDigging)
+	{
+		const FVector Location = GetActorLocation();
+		if (IsInBurrow() || bWasInSurge || Beach->GetWaterDepthAt(Location.X, Location.Y) > 0.f)
+		{
+			CancelDig(TEXT("water"));
+		}
+		else
+		{
+			DigElapsed += DeltaSeconds;
+			if (DigElapsed >= CrabDig::Duration)
+			{
+				FinishDig();
+			}
+		}
+	}
+}
+
 // --- Survival ---------------------------------------------------------------------
 
 void ACrabPawn::SweepOut()
 {
 	ACrabBeach* Beach = GetBeach();
 	StopDance();
+	StopFeeding();
+	CancelDig(TEXT("swept"));
 	ExitBurrow();
 	ClearMoveTarget();
 	DashTimeRemaining = 0.f;
@@ -560,6 +768,8 @@ void ACrabPawn::UpdateSurvival(float DeltaSeconds)
 	if (bInSurge)
 	{
 		StopDance();
+		StopFeeding();
+		CancelDig(TEXT("surge"));
 		// A rising tide shoves the crab up the beach, a falling one drags it out to sea.
 		const float Direction = Beach->IsTideRising() ? -1.f : 1.f;
 		AddActorWorldOffset(FVector(Direction * CrabSurvival::SurgePushSpeed(WaterDepth) * DeltaSeconds, 0.f, 0.f), true);
@@ -606,10 +816,15 @@ void ACrabPawn::UpdateWalking(float DeltaSeconds)
 		if (DistanceToTarget <= ArrivalRadius)
 		{
 			const int32 Burrow = PendingBurrow;
+			const int32 Patch = PendingPatch;
 			ClearMoveTarget();
 			if (Burrow != INDEX_NONE)
 			{
 				EnterBurrow(Burrow);
+			}
+			else if (Patch != INDEX_NONE)
+			{
+				StartFeeding(Patch);
 			}
 		}
 		else
@@ -713,6 +928,44 @@ void ACrabPawn::UpdateProceduralDance(float DeltaSeconds)
 	}
 }
 
+void ACrabPawn::UpdateWorkPose(float DeltaSeconds)
+{
+	FeedBlend = FMath::FInterpTo(FeedBlend, IsFeeding() ? 1.f : 0.f, DeltaSeconds, 8.f);
+	DigBlend = FMath::FInterpTo(DigBlend, bDigging ? 1.f : 0.f, DeltaSeconds, 8.f);
+	if (IsFeeding() || bDigging)
+	{
+		WorkClock += DeltaSeconds;
+	}
+	if (BurrowSink > 0.f || (FeedBlend < 0.01f && DigBlend < 0.01f))
+	{
+		return;
+	}
+
+	// Sifting: the crab dips toward the mud and its small claw scoops to its mouth 2.5 times a second.
+	// Digging: it shudders and settles into the sand. Stand-ins until the clips exist. They add to the
+	// pose UpdateProceduralDance and UpdateBurrowSink just set this frame.
+	const float Scoop = 0.5f + 0.5f * FMath::Sin(2.f * PI * 2.5f * WorkClock);
+	const float Shudder = FMath::Sin(2.f * PI * 7.f * WorkClock);
+	const float Dip = 4.f * FeedBlend + (5.f + 2.f * Shudder) * DigBlend;
+	const float Pitch = -9.f * FeedBlend * (0.6f + 0.4f * Scoop);
+	const float Roll = 3.f * Shudder * DigBlend;
+
+	if (bUseSkeletalMesh)
+	{
+		GetMesh()->SetRelativeRotation(FRotator(Pitch, 0.f, Roll));
+		GetMesh()->AddRelativeLocation(FVector(0.f, 0.f, -Dip));
+		return;
+	}
+
+	Visual->AddRelativeLocation(FVector(0.f, 0.f, -Dip));
+	Visual->SetRelativeRotation(FRotator(Pitch, 0.f, Visual->GetRelativeRotation().Roll + Roll));
+	if (ClawParts.Num() > 0 && ClawBaseLocations.Num() > 0)
+	{
+		// The first claw is the small one.
+		ClawParts[0]->SetRelativeLocation(ClawBaseLocations[0] + FVector(-28.f, 55.f, 8.f) * Scoop * FeedBlend);
+	}
+}
+
 void ACrabPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
@@ -734,7 +987,9 @@ void ACrabPawn::Tick(float DeltaSeconds)
 	UpdateSurvival(DeltaSeconds);
 	UpdateBurrowSink(DeltaSeconds);
 	UpdateWalking(DeltaSeconds);
+	UpdateForaging(DeltaSeconds);
 	UpdateAnimation(DeltaSeconds);
+	UpdateWorkPose(DeltaSeconds);
 
 	StateLogTimer += DeltaSeconds;
 	if (StateLogTimer >= StateLogInterval)
@@ -753,9 +1008,10 @@ void ACrabPawn::LogState() const
 	const FString Target = bHasTarget ? FString::Printf(TEXT("%.1f,%.1f"), MoveTarget.X, MoveTarget.Y) : FString(TEXT("none"));
 	const ACrabBeach* Beach = GetBeach();
 	// The live test parses everything up to dash=. New fields go after it.
-	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d"),
+	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d"),
 		GetWorld()->GetTimeSeconds(), Location.X, Location.Y, Location.Z,
 		FRotator::NormalizeAxis(GetActorRotation().Yaw), GetCharacterMovement()->Velocity.Size2D(), *Target, IsDashing() ? 1 : 0,
 		Grip, WaterDepth, Beach ? Beach->GetSurfaceLevel() : 0.f, Beach ? Beach->GetTideFraction() : 0.f,
-		CurrentBurrow, bDancing ? 1 : 0, AnimName(AnimState), bUseSkeletalMesh ? 1 : 0, SweptCount);
+		CurrentBurrow, bDancing ? 1 : 0, AnimName(AnimState), bUseSkeletalMesh ? 1 : 0, SweptCount,
+		Food, FeedingPatch, GetDigProgress(), Beach ? Beach->GetDugBurrowCount() : 0);
 }

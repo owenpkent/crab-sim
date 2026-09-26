@@ -13,6 +13,8 @@ class ACrabPawn;
  * - Click the ground: walk there and stop.
  * - Hold the left button: follow the cursor.
  * - Click a burrow: walk to it and dig in. Click away from it to come out.
+ * - Click a food patch: walk to it and sift it until it is bare, the crab is full or it moves on.
+ * - Click the HUD's dig button: dig a new burrow where the crab stands. Any walk cancels it.
  * - Click the crab: start or stop its dance.
  * - Right click: dash toward the cursor.
  */
@@ -40,6 +42,13 @@ public:
 	void HandleHold(ACrabPawn& Crab, const FVector& Point);
 
 	/**
+	 * A fresh left press at a screen pixel. On the dig button it starts the dig and swallows the rest of
+	 * the press, so the button is never also a walk. Anywhere else it is a click on the ground at
+	 * GroundPoint, when there is one (null when the cursor points at the sky).
+	 */
+	void HandleLeftPress(ACrabPawn& Crab, const FVector2D& ScreenPos, const FVector2D& ViewSize, const FVector* GroundPoint);
+
+	/**
 	 * The left button came up. A click on the crab toggles its dance and then swallows the rest of
 	 * that press, so a long press or a wobbling hand does not turn into a walk. This ends the swallow.
 	 */
@@ -64,5 +73,5 @@ private:
 	float ScreenLogTimer = 0.f;
 	bool bSwallowHold = false;
 
-	void ResolveTarget(const ACrabPawn& Crab, const FVector& Point, FVector& OutTarget, int32& OutBurrow) const;
+	void ResolveTarget(const ACrabPawn& Crab, const FVector& Point, FVector& OutTarget, int32& OutBurrow, int32& OutPatch) const;
 };
