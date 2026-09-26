@@ -134,8 +134,9 @@ void ACrabHUD::DrawFoodBar(const ACrabPawn& Crab, float Scale)
 	const float Food = Crab.GetFood();
 	DrawRect(Panel, X - 4.f * Scale, Y - 4.f * Scale, Width + 8.f * Scale, Height + 8.f * Scale);
 	DrawRect(FMath::Lerp(FoodLow, FoodHigh, FMath::Clamp(Food, 0.f, 1.f)), X, Y, Width * Food, Height);
-	// A tick where the store is enough for a burrow.
+	// A tick where the store is enough for a burrow, and one where it is enough to begin a molt.
 	DrawRect(Text, X + Width * CrabDig::FoodCost - Scale, Y - 4.f * Scale, 2.f * Scale, Height + 8.f * Scale);
+	DrawRect(Text, X + Width * CrabMolt::Tuning::MinFood - Scale, Y - 4.f * Scale, 2.f * Scale, Height + 8.f * Scale);
 	DrawText(TEXT("FOOD"), Text, X, Y - 26.f * Scale, Font, Scale * 0.8f);
 }
 
@@ -290,7 +291,7 @@ void ACrabHUD::DrawResults(const ACrabPawn& Crab, float Scale)
 	Rows.Add({TEXT("Food eaten"), FString::Printf(TEXT("%.1f"), Crab.GetRoundFoodEaten()), Text});
 	for (int32 Index = 0; Index < Rows.Num(); ++Index)
 	{
-		const float Y = PanelRect.Min.Y + (112.f + 40.f * Index) * Scale;
+		const float Y = PanelRect.Min.Y + (104.f + 36.f * Index) * Scale;
 		float ValueW = 0.f;
 		float ValueH = 0.f;
 		GetTextSize(Rows[Index].Value, ValueW, ValueH, Font, Scale * 1.3f);

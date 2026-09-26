@@ -186,7 +186,11 @@ bool FCrabHudResultsPanelTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("the button is inside the panel"), Button.Min.X >= Panel.Min.X && Button.Max.X <= Panel.Max.X && Button.Min.Y >= Panel.Min.Y && Button.Max.Y <= Panel.Max.Y);
 		TestNearlyEqual(TEXT("centred on it"), static_cast<float>(Button.GetCenter().X), static_cast<float>(Panel.GetCenter().X), 0.01f);
 		TestTrue(TEXT("a big target: over 240 wide"), Button.GetSize().X >= 240.f * Scale && Button.GetSize().Y >= 80.f * Scale);
-		TestTrue(TEXT("with room above it for the stat rows"), Button.Min.Y - Panel.Min.Y > 300.f * Scale);
+		TestTrue(TEXT("with room above it for the stat rows"), Button.Min.Y - Panel.Min.Y > 270.f * Scale);
+		if (View.Y >= 720)
+		{
+			TestTrue(TEXT("and at a playable size the panel stays clear of the pips and the bars under it"), Panel.Max.Y < CrabHud::MoltPipRect(View.X, View.Y, 0).Min.Y - 10.f * Scale);
+		}
 	}
 	return true;
 }

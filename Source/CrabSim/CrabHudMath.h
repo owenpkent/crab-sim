@@ -18,7 +18,7 @@ namespace CrabHud
 	constexpr float NewRoundButtonWidth = 300.f;
 	constexpr float NewRoundButtonHeight = 96.f;
 	constexpr float ResultsPanelWidth = 560.f;
-	constexpr float ResultsPanelHeight = 440.f;
+	constexpr float ResultsPanelHeight = 410.f;
 	/** Side of one molt pip and the gap between pips, at scale 1. */
 	constexpr float MoltPipSize = 26.f;
 	constexpr float MoltPipGap = 10.f;
