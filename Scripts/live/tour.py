@@ -52,7 +52,8 @@ from session import Abort, Run, CLICK_HOLD, SETTLE, event_detail, in_view
 GO_TIMEOUT = 60.0          # how long to wait for record.sh to start the video
 INTRO = 1.0                # the beach and the crab, before anything moves
 GLIDE_HZ = 60.0            # pointer updates per second while gliding
-FEED_SECONDS = 6.5         # the crab feeds this long, so the food bar visibly fills and the patch dulls
+FEED_TARGET = 0.36         # the crab sifts until its store reaches this, so the food bar visibly fills, the patch dulls and the dig (0.30) is paid for
+FEED_MAX = 20.0            # game seconds from food_begin by which it must have got there
 PATCH_INDEX = 3            # the food patch near the start, in view from the first frame
 PATCH_MARGIN = 90          # a patch this close to the viewport edge is walked toward first
 AWAY_PX = (-380, 40)       # from the crab, leaving the patch for open sand: screen left is -Y
@@ -274,7 +275,11 @@ class Tour(Run):
         self.beat("feeding: the food bar fills as the patch is sifted")
         # The cursor rests beside the patch, out of the crab's way, while it feeds.
         self.glide_to((pixel[0] + 150, pixel[1] - 90), 1.0)
-        self.pause(FEED_SECONDS - 1.0)
+        # Feeding is slow (the tide sets the pace of a round): sift until the store can pay for the dig.
+        self.wait_for(lambda: self.tail.latest() is not None and self.tail.latest().food is not None
+                      and self.tail.latest().food >= FEED_TARGET, begin.t + FEED_MAX)
+        self.check(self.tail.latest() is not None and (self.tail.latest().food or 0.0) >= FEED_TARGET,
+                   "the crab sifts up to food %.2f within %.0f s of food_begin" % (FEED_TARGET, FEED_MAX))
         return True
 
     def beat_dig(self):
@@ -450,7 +455,8 @@ class Tour(Run):
                 f.write("video=%.1f %s\n" % (seconds, text))
 
 
-def main():
+def main(tour_class=None):
+    tour_class = tour_class or Tour
     args = [a for a in sys.argv[1:] if a != "--sync"]
     sync = "--sync" in sys.argv[1:]
     if len(args) < 2:
@@ -460,7 +466,7 @@ def main():
     pid = int(args[2]) if len(args) > 2 and args[2].isdigit() else None
     os.makedirs(out_dir, exist_ok=True)
 
-    run = Tour(log_path, out_dir, pid, sync)
+    run = tour_class(log_path, out_dir, pid, sync)
     aborted = None
     try:
         run.scenario_tour()

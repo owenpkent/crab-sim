@@ -40,15 +40,17 @@ and thin as the patch is eaten.
 - Click a patch (any click within 200 uu of its middle): the crab walks to the middle and feeds by itself. Holding
   the button on the patch it is already sifting keeps it sifting. The crab itself beats the patch under it: click
   the crab and it dances instead.
-- Feeding moves richness from the patch into the crab's Food store (0 to 1, starts at 0.25) at about 0.08 food a
-  second from a full patch, easing to a third of that as it runs out, so a full patch lasts about 20 s.
+- Feeding moves richness from the patch into the crab's Food store (0 to 1, starts at 0.25) at about 0.025 food a
+  second from a full patch, easing to under a third of that as it runs out, so a full patch lasts a little over a
+  minute and a poor one (0.4) about 40 s. Sifting is slow on purpose: it is what makes food matter, and the tide,
+  not the food, then sets the pace of a round (see Molting).
 - It stops when the patch is bare ("Patch empty"), when the crab is full ("Fed", at 0.98), when the crab is told
   to go anywhere else, dashes, dances or digs in, and when the surge takes hold.
 - A patch that has had more than 10 cm of water over it is fresh again, back to its own full richness, once the
   water has left it. The tide refreshes the flats, even the high ones.
 - Food drains by 0.004 a second, always: a whole tide costs about 0.7, so foraging has to go on. Low food does not
-  hurt the crab yet. It only stops it digging. The Food bar sits beside the grip bar, with a tick at 0.30, where
-  a burrow becomes affordable.
+  hurt the crab. It gates digging (0.30) and molting (0.80). The Food bar sits beside the grip bar, with a tick at
+  0.30, where a burrow becomes affordable, and one at 0.80, where a molt does.
 
 Until the skeletal crab has a feeding clip, the crab dips toward the mud and its small claw scoops to its mouth
 twice a second, as a stand-in.
@@ -71,6 +73,48 @@ with its cost, greyed out when it cannot be used, and a line above it says why.
   as fast. Dug holes stay for the round. Dig high on the dunes and the hole is safe all tide. Dig low, next to the
   food, and it floods sooner. That is the point.
 
+## Molting (built)
+
+A fiddler crab molts hidden in a burrow, soft and vulnerable. The molt button is on the HUD, straight above the dig
+button and the same size (140 px square at 720p, growing with the window). It is labelled MOLT with its cost, greyed
+out when it cannot be used, and a line above it says why.
+
+- It is enabled only when the crab is inside a burrow (any, authored or dug), has Food of at least 0.80, and no molt
+  is under way. Otherwise a click on it does nothing but say why on the message line: "Molt needs a burrow" or
+  "Molt needs more food".
+- Click it and the crab stays in the burrow for ten seconds. A ring fills round the button with the seconds left in
+  the middle. The stand-in crab settles half out of its hole and pulses. It costs 0.80 food, paid when the molt is
+  done, not before.
+- Done: Molts goes up by one ("Molted (1 of 3)", and a pip beside the food bar fills), grip is refilled to full, and
+  the crab grows 8 percent (24 percent after three). The growth is how the crab looks, not how it moves: the mesh
+  scales, the capsule, the speed and every click radius stay as they were. The crab swells over a second and stays in
+  view for a moment so it can be seen, then sinks out of sight.
+- Leaving cancels it, for free: any click elsewhere, a dash, a new order. The water flooding the burrow mid-molt
+  cancels it too, and leaves the crab soft for 30 s: its grip cannot rise above half, shown as a SOFT tag with the
+  seconds left and a mark on the grip bar. A flood that catches the crab out of a molt does not.
+- A click on the molt button is only ever a click on the button: it never walks the crab, and never digs it out.
+
+Balance. A good round is meant to take about 8 to 10 minutes at the default tide speed, so about one molt a tide,
+and food is never the only limit. A molt is 0.80 food, about half a minute of sifting at the slow feed rate, then ten
+undisturbed seconds in a burrow that will not flood. The first low water is enough for one molt. Then the water takes
+the flats and floods the low burrows, the crab has to sit out the high tide in a high one, and the next molts wait
+for the flats to come back. Burrow choice is the game: a low burrow next to the food is a gamble (it floods first),
+a high one is safe but a long walk from the food, and a molt that the sea interrupts leaves the crab soft. Every
+number that sets the pace is in one place, `CrabMolt::Tuning` in `Source/CrabSim/CrabMoltMath.h`, and the feed rate
+(0.025) in `CrabFoodMath.h`.
+
+## Round (built)
+
+The round is won at three molts: the crab is fully grown.
+
+- A centered panel says "Fully grown!" and shows the time taken, the best time this session (kept in memory, no save
+  file), molts, burrows dug, and food eaten, over a big NEW ROUND button.
+- While the panel is up the tide stands still, hunger stops, and feeding, digging, dancing, dashing and walking are
+  ignored. Only the button does anything.
+- NEW ROUND resets the world: the tide is back at low water and running, food is back at 0.25, every patch is full and
+  fresh, the dug burrows are gone, Molts is 0, grip is full and the crab is back at the start, facing the sea.
+- There is no losing state in this pass. Gulls come later.
+
 ## Dance (built)
 
 Click the crab. It turns to face the camera and does the claw-wave dance until you click it again or click
@@ -88,6 +132,9 @@ Pointer-first. Nothing requires a key, the wheel, or a timing window.
 - Left click a burrow: walk there and dig in. Click your own hole to stay in, click elsewhere to come out.
 - Left click a food patch: walk there and feed until it is bare, the crab is full, or you send it elsewhere.
 - Left click the HUD's dig button: dig a new burrow where the crab stands. A big target, no key, no timing.
+- Left click the HUD's molt button, in a burrow: molt for ten seconds. Same size, above the dig button. Click
+  elsewhere to leave and cancel.
+- Left click NEW ROUND on the results panel: start again.
 - Left click the crab: dance on or off.
 - Right click: dash toward the cursor, 1.2 s cooldown.
 - Camera is fixed-angle and follows the crab. No rotation, no zoom.
@@ -107,18 +154,18 @@ Stylized realism, top notch: a hand-painted hero crab (sandy carapace, turquoise
 claw) on a real 3D beach with relief, a tidal creek, translucent water with foam where it meets the sand, wet
 sand that darkens at the waterline. Contract and pipeline in `Art/README.md`.
 
-## Loop (draft)
+## Loop (built, first pass)
 
-1. Low tide: forage the flats, claim a burrow.
-2. Rising tide: retreat, choose a hole, hold it.
-3. High tide: rest, dance, molt if fed enough.
-4. Repeat. The round ends when you are eaten, or after N molts.
+1. Low tide: forage the flats, dig or claim a burrow, molt if the store is at 0.80 and the burrow will stay dry for ten
+   seconds.
+2. Rising tide: retreat, choose a hole, hold it. A flood that catches a molt leaves the crab soft.
+3. High tide: sit it out in a high burrow, rest, dance, molt if fed enough.
+4. Repeat until the third molt. The round is won at three: the results panel, best time, NEW ROUND. Nothing eats
+   the crab yet, so there is no losing state.
 
 ## Open questions
 
 - What does dancing do? What eats you (gulls)?
-- Hunger has no teeth. Should low food slow the crab, weaken its grip, or stay a gate on digging and molting?
-- Molting needs a fed crab: how fed, and does it need a burrow?
+- Hunger has no teeth. Low food gates digging and molting. Should it also slow the crab or weaken its grip?
 - Pinch: a button that is not left click. Right click is the dash.
-- Engine is decided: UE 5.8, C++. Keel to be vendored once the loop needs it.
 - Tone: deadpan nature documentary, or full chaos?

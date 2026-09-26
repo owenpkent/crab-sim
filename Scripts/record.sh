@@ -6,6 +6,7 @@
 # ffmpeg and close the game.
 #
 #   Scripts/record.sh [OUT.mp4]         default videos/crab-sim-tour.mp4
+#   RECORD_TOUR=molt Scripts/record.sh  the molt clip instead, default videos/crab-sim-molt.mp4
 #   LIMIT=150 CRF=28 Scripts/record.sh videos/small.mp4
 #   SPEEDUP=2 Scripts/record.sh videos/fast.mp4       the tour at 2x, after the capture
 #   RECORD_TIDE_SPEED=1.5 Scripts/record.sh           a faster tide (see below)
@@ -18,6 +19,11 @@
 # dash (right click); then the crab waves at the incoming tide, the surge takes its
 # grip and the sea sweeps it out to the dunes, and a few seconds of hold. About
 # 105 s at real speed. The pointer glides between targets so a viewer can follow it.
+# RECORD_TOUR=molt records the molt tour (Scripts/live/tour_molt.py, about 70 s) instead: the molt button
+# refuses in the open, three molts in a burrow each ten seconds with the progress ring, the crab climbing out
+# bigger after the first two, the third ending the round, the results panel and NEW ROUND. It runs with
+# CrabSim.FoodFloor 0.9 (test only: the crab stays fed, so there is no foraging) and a slow tide (0.3 unless
+# RECORD_TIDE_SPEED says otherwise), so the burrow stays dry.
 # Next to OUT.mp4 goes OUT.events.txt: what the tour did and what the game
 # logged, each with its time in the video (video=SECONDS, good to about half a
 # second, and divided by SPEEDUP).
@@ -34,7 +40,8 @@
 # Do not let another window cover the game: the capture is of the screen.
 #
 # Environment overrides:
-#   RECORD_TIDE_SPEED=<n>  CrabSim.TideSpeed (default 0.75: a whole tide takes 240 s)
+#   RECORD_TOUR=tour|molt  which tour to play (default tour)
+#   RECORD_TIDE_SPEED=<n>  CrabSim.TideSpeed (default 0.75: a whole tide takes 240 s; 0.3 for the molt tour)
 #   LIMIT=<s>              stop recording after this many seconds (default 240)
 #   FPS=30  CRF=23         capture frame rate and x264 quality (lower is better)
 #   SPEEDUP=1              play the video this many times faster, after the capture
@@ -68,10 +75,16 @@ PYTHON="${RECORD_PYTHON:-python3}"
 export DISPLAY="${DISPLAY:-:0}"
 
 case "${1:-}" in -h|--help) awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} NR > 1 {exit}' "$0"; exit 0 ;; esac
-OUT="${1:-$ROOT/videos/crab-sim-tour.mp4}"
+TOUR="${RECORD_TOUR:-tour}"
+case "$TOUR" in
+	tour) TOUR_SCRIPT=tour.py; TOUR_TIDE=0.75; TOUR_EXEC="" ;;
+	molt) TOUR_SCRIPT=tour_molt.py; TOUR_TIDE=0.3; TOUR_EXEC=",CrabSim.FoodFloor 0.9" ;;
+	*) echo "RECORD_TOUR must be tour or molt: $TOUR" >&2; exit 2 ;;
+esac
+OUT="${1:-$ROOT/videos/crab-sim-$TOUR.mp4}"
 RESX="${RECORD_RESX:-1280}"
 RESY="${RECORD_RESY:-720}"
-TIDE_SPEED="${RECORD_TIDE_SPEED:-0.75}"
+TIDE_SPEED="${RECORD_TIDE_SPEED:-$TOUR_TIDE}"
 LIMIT="${LIMIT:-240}"
 FPS="${FPS:-30}"
 CRF="${CRF:-23}"
@@ -128,7 +141,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-EXEC_CMDS="CrabSim.StateLog 1,CrabSim.TideSpeed $TIDE_SPEED"
+EXEC_CMDS="CrabSim.StateLog 1,CrabSim.TideSpeed $TIDE_SPEED$TOUR_EXEC"
 if [ -n "${RECORD_EXEC_EXTRA:-}" ]; then EXEC_CMDS="$EXEC_CMDS,$RECORD_EXEC_EXTRA"; fi
 # -CrabSimRecord marks a game started here. It is only a label: nothing is ever matched by it.
 GAME_ARGS=( -game -windowed -ResX="$RESX" -ResY="$RESY" -nosplash -unattended -stdout -FullStdOutLogOutput
@@ -152,7 +165,7 @@ echo "== started the game (pid $GAME_PID). Waiting for it to be ready, then reco
 
 # The tour waits for CRABSIM_READY, focuses the window, parks the pointer, then publishes
 # the window's place in window.txt and waits for go (the unix time the video starts).
-( cd "$ROOT/Scripts/live" && PYTHONUNBUFFERED=1 exec "$PYTHON" tour.py "$RUN/game.log" "$RUN" "$GAME_PID" --sync ) \
+( cd "$ROOT/Scripts/live" && PYTHONUNBUFFERED=1 exec "$PYTHON" "$TOUR_SCRIPT" "$RUN/game.log" "$RUN" "$GAME_PID" --sync ) \
 	> "$RUN/tour.txt" 2>&1 &
 TOUR_PID=$!
 
