@@ -100,3 +100,7 @@ Thumbs.db
 
 # Blender working files (high-poly sculpt, rigged scene). Rebuilt by Art/blender/*.py from source.
 /Art/blender/_work/
+
+# Recorded tours (Scripts/record.sh). Local only; never commit videos.
+/videos/*.mp4
+/videos/*.events.txt

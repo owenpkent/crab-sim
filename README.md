@@ -30,7 +30,7 @@ assets that need network access to fetch.
   - `CrabSimGameMode`: wires the above together
   - `Tests/`: automation tests (rules, beach, pawn, controller, game mode)
 - `Config/`: project ini files
-- `Scripts/`: build, test, play, live test, screenshot
+- `Scripts/`: build, test, play, live test, record, screenshot
 - `Art/`: Blender and Unreal Python that build the assets, plus the art contract
 - `Content/`: generated assets (LFS, see `.gitattributes`)
 
@@ -42,10 +42,17 @@ Scripts/test.sh           headless automation tests (filter as argument)
 Scripts/play.sh           start the game for a person to play
 Scripts/live-test.sh      drive the real game with a virtual mouse and check the log
 Scripts/shot.sh out.png   screenshot the running game window
+Scripts/record.sh [out.mp4]   record a scripted tour of the game as video (default videos/crab-sim-tour.mp4)
 ```
 
 `live-test.sh` opens a window and moves the real pointer for about a minute.
 Leave the machine alone while it runs. Needs X11 and write access to `/dev/uinput`.
+
+`record.sh` launches the game, plays a 75 second tour through the same virtual pointer (scuttle, dance, dash,
+burrow, then the tide rises and sweeps the crab out) and captures the window with ffmpeg: about 2 minutes end to end,
+same rules as the live test (it refuses to start if another CrabSim game is running). Writes the mp4 and an events
+file with times in the video. `LIMIT`, `FPS`, `CRF`, `SPEEDUP` and `RECORD_TIDE_SPEED` tune it, see the script
+header. The recorded mp4 and events files stay local (git-ignored).
 
 Console variables and commands:
 
