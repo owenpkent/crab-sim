@@ -91,3 +91,6 @@ venv/
 Thumbs.db
 *.swp
 *~
+
+# Downloaded originals. Recreated by Art/blender/fetch_*.py from the manifests in Art/assets/.
+/Art/source/
