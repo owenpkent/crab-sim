@@ -16,7 +16,10 @@ Usage: session.py <game log> <output dir> [game pid] [scenario]
   scenario is "basic" (the default: ready, dance, burrow, walk, dash), "tide"
   (the mouse is never touched; the sea rises, surges, sweeps the crab, falls) or
   "forage" (click a food patch and feed, click away, click the HUD's dig button,
-  wait for the new burrow, click it and dig in; the tide is frozen at low water).
+  wait for the new burrow, click it and dig in; the tide is frozen at low water) or
+  "molt" (click the molt button in the open and get refused, dig into a burrow, start a
+  molt and leave to cancel it, dig in again, molt to the end; the tide is frozen at low
+  water and CrabSim.FoodFloor keeps the crab fed).
 
 Time limits are in game seconds (the t= field), which run at real time. Each
 wait also has a wall-clock guard so a stalled game cannot hang the run.
@@ -74,7 +77,9 @@ PATCH_INDEX = 3
 PATCH_POS = (600.0, -650.0)  # world xy of patch3, the nearest patch to the start
 FEED_BEGIN_WINDOW = 10.0     # s from the click to food_begin (a walk of about 630 uu)
 FEED_WATCH = 3.0             # s of feeding that are measured
-FEED_MIN_GAIN = 0.10         # food the crab must gain in that time (about 0.06 a second is expected)
+FEED_MIN_GAIN = 0.03         # food the crab must gain in that time (about 0.016 a second net of hunger is expected)
+FEED_TARGET = 0.40           # food the crab feeds up to before it clicks away, so it can pay for the dig (0.30)
+FEED_MAX = 30.0              # s from food_begin by which it must have got there
 FEED_ARRIVE_TOL = 60.0       # uu from the patch centre while feeding
 FEED_END_WINDOW = 1.5        # s from the click away to food_end
 FEED_END_MIN = 0.05          # food the food_end event must report
@@ -89,6 +94,21 @@ DIG_ENTER_WINDOW = 6.0       # s from the click on the new hole to burrow_enter
 BURROW_CENTRES = [(-2450.0, 350.0), (-1000.0, -520.0), (700.0, 760.0), (1900.0, -900.0)]
 PATCH_CENTRES = [(-1300.0, 450.0), (-650.0, 520.0), (-350.0, -700.0), (600.0, -650.0), (1150.0, -80.0),
                  (1700.0, -420.0), (1800.0, 850.0)]
+
+# molt (TideSpeed 0 and CrabSim.FoodFloor 0.9: fed, and the tide cannot flood the burrow)
+MOLT_BURROW = 2              # burrow2 is dry all through the scenario, and near enough to walk to
+MOLT_REFUSE_WINDOW = 1.5     # s from the click on the molt button in the open to molt_refused
+MOLT_BEGIN_WINDOW = 1.5      # s from the click on the molt button to molt_begin
+MOLT_DURATION = 10.0
+MOLT_DONE_WINDOW = 12.5      # s from the click to molt_done (the molt takes 10 s)
+MOLT_CANCEL_WINDOW = 1.5     # s from the click elsewhere to molt_cancel
+MOLT_CANCEL_AFTER = 3.0      # s of molting before the cancelling click
+MOLT_COST = 0.80
+MOLT_COST_TOL = 0.06         # the floor holds food at 0.9, so the store after paying is about 0.1
+MOLT_MIN_FOOD = 0.80
+MOLT_GROWTH = 1.08
+MOLT_GROWTH_TOL = 0.01
+MOLT_MAX_MOVE = 25.0         # uu the crab may drift while it molts, or while a refused click is made
 
 # tide (TideSpeed 10: a whole tide is 18 s). The limits below are for that speed; LIVE_TIDE_SPEED
 # below 10 stretches the tide-clock ones (rise, swept, fall) by 10/speed.
@@ -117,7 +137,9 @@ STATE_RE = re.compile(
     r"(?:\s+grip=(?P<grip>{n}))?(?:\s+depth=(?P<depth>{n}))?(?:\s+water=(?P<water>{n}))?"
     r"(?:\s+tide=(?P<tide>{n}))?(?:\s+burrow=(?P<burrow>-?\d+))?(?:\s+dance=(?P<dance>[01]))?"
     r"(?:\s+anim=(?P<anim>\w+))?(?:\s+skel=(?P<skel>\d+))?(?:\s+swept=(?P<swept>\d+))?"
-    r"(?:\s+food=(?P<food>{n}))?(?:\s+feeding=(?P<feeding>-?\d+))?(?:\s+dig=(?P<dig>{n}))?(?:\s+dug=(?P<dug>\d+))?".format(n=_NUM))
+    r"(?:\s+food=(?P<food>{n}))?(?:\s+feeding=(?P<feeding>-?\d+))?(?:\s+dig=(?P<dig>{n}))?(?:\s+dug=(?P<dug>\d+))?"
+    r"(?:\s+molts=(?P<molts>\d+))?(?:\s+molt=(?P<molt>{n}))?(?:\s+soft=(?P<soft>{n}))?(?:\s+over=(?P<over>[01]))?"
+    r"(?:\s+scale=(?P<scale>{n}))?".format(n=_NUM))
 # Anything after t= is detail (patch=3 amount=0.412 ...), kept in rest.
 EVENT_RE = re.compile(r"CRABSIM_EVENT\s+(?P<name>[A-Za-z_]+)\s+t=(?P<t>{n})(?P<rest>.*)".format(n=_NUM))
 SCREEN_RE = re.compile(r"CRABSIM_SCREEN\s+t=(?P<t>{n})\s+view=(?P<vw>\d+)x(?P<vh>\d+)\s+"
@@ -125,15 +147,18 @@ SCREEN_RE = re.compile(r"CRABSIM_SCREEN\s+t=(?P<t>{n})\s+view=(?P<vw>\d+)x(?P<vh
 BURROW_RE = re.compile(r"burrow(?P<i>\d+)=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 PATCH_RE = re.compile(r"patch(?P<i>\d+)=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 DIG_BUTTON_RE = re.compile(r"\sdig=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
+MOLT_BUTTON_RE = re.compile(r"\smolt=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
+NEW_ROUND_RE = re.compile(r"\snewround=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 READY_RE = re.compile(r"LogCrabSim:\s*CRABSIM_READY")
 PROBLEM_RE = re.compile(r"Fatal error|Ensure condition failed|Signal 11|SIGSEGV|Unhandled Exception")
 
 State = namedtuple("State", "t x y z yaw speed target dash grip depth water tide burrow dance anim skel swept "
-                            "food feeding dig dug", defaults=(None,) * 13)
+                            "food feeding dig dug molts molt soft over scale", defaults=(None,) * 18)
 Event = namedtuple("Event", "name t rest", defaults=("",))
 # view is (width, height) of the game viewport, crab is a pixel (or (-1, -1)), burrows and patches map index to a
-# pixel, dig is the pixel at the middle of the HUD's dig button (or None).
-Screen = namedtuple("Screen", "t view crab burrows patches dig", defaults=({}, None))
+# pixel, dig, molt and newround are the pixels at the middle of the HUD's dig button, molt button and the results
+# panel's new round button (or None).
+Screen = namedtuple("Screen", "t view crab burrows patches dig molt newround", defaults=({}, None, None, None))
 # A place in the log: the game time, and how many states and events had been read.
 Mark = namedtuple("Mark", "t states events state")
 
@@ -153,7 +178,8 @@ def parse_state(line):
                  opt("grip", float), opt("depth", float), opt("water", float), opt("tide", float),
                  opt("burrow", int), opt("dance", lambda v: v == "1"), opt("anim", str),
                  opt("skel", int), opt("swept", int), opt("food", float), opt("feeding", int),
-                 opt("dig", float), opt("dug", int))
+                 opt("dig", float), opt("dug", int), opt("molts", int), opt("molt", float), opt("soft", float),
+                 opt("over", lambda v: v == "1"), opt("scale", float))
 
 
 def parse_event(line):
@@ -178,9 +204,13 @@ def parse_screen(line):
     patches = {int(b.group("i")): (float(b.group("x")), float(b.group("y")))
                for b in PATCH_RE.finditer(m.group("rest"))}
     dig = DIG_BUTTON_RE.search(m.group("rest"))
+    molt = MOLT_BUTTON_RE.search(m.group("rest"))
+    again = NEW_ROUND_RE.search(m.group("rest"))
     return Screen(float(m.group("t")), (int(m.group("vw")), int(m.group("vh"))),
                   (float(m.group("cx")), float(m.group("cy"))), burrows, patches,
-                  (float(dig.group("x")), float(dig.group("y"))) if dig else None)
+                  (float(dig.group("x")), float(dig.group("y"))) if dig else None,
+                  (float(molt.group("x")), float(molt.group("y"))) if molt else None,
+                  (float(again.group("x")), float(again.group("y"))) if again else None)
 
 
 def ang_diff(a, b):
@@ -302,7 +332,8 @@ class Run:
         target = "none" if s.target is None else "%.0f,%.0f" % s.target
         text = ("%s: t=%.2f loc=%.0f,%.0f yaw=%.1f speed=%.0f target=%s dash=%d"
                 % (label, s.t, s.x, s.y, s.yaw, s.speed, target, int(s.dash)))
-        for name in ("grip", "depth", "water", "tide", "burrow", "dance", "anim", "swept", "food", "feeding", "dug"):
+        for name in ("grip", "depth", "water", "tide", "burrow", "dance", "anim", "swept", "food", "feeding", "dug",
+                     "molts", "molt", "soft", "scale"):
             value = getattr(s, name)
             if value is not None:
                 text += " %s=%s" % (name, int(value) if isinstance(value, bool) else value)
@@ -886,6 +917,13 @@ class Run:
             self.check(False, "the state lines carry food (%d lines while feeding)" % len(window))
         self.shot("feeding")
 
+        # Feeding is slow (the tide sets the pace of a round), so sift on until the store can pay for a burrow.
+        fed = self.wait_for(lambda: self.tail.latest() is not None and self.tail.latest().food is not None
+                            and self.tail.latest().food >= FEED_TARGET and self.tail.latest(), begin.t + FEED_MAX)
+        self.check(fed is not None and fed.feeding == PATCH_INDEX,
+                   "the crab is still sifting and food reaches %.2f within %.0f s of food_begin (food=%s)"
+                   % (FEED_TARGET, FEED_MAX, None if fed is None else fed.food))
+
         # Click away: it stops feeding, and the event says how much it ate.
         screen = self.fresh_screen()
         if screen is None:
@@ -970,6 +1008,178 @@ class Run:
                        % (hole, None if inside is None else inside.burrow))
         self.shot("dug_in")
 
+    # ---- scenario molt: steps ----
+    def step_molt_refused(self):
+        print("-- molt refused in the open", flush=True)
+        screen = self.fresh_screen()
+        if screen is None or screen.molt is None:
+            self.check(False, "a CRABSIM_SCREEN line with the molt button arrived (is this the molt build?)")
+            return False
+        spot = self.fresh(self.now_t() + STATE_INTERVAL)
+        self.describe("standing", spot)
+        mark = self.click_view(screen, screen.molt, "the molt button (%.0f,%.0f)" % screen.molt)
+        if mark is None:
+            return False
+        refused = self.expect_event(mark, "molt_refused", MOLT_REFUSE_WINDOW, "click on the molt button out in the open: molt_refused event")
+        if refused is not None:
+            self.check("burrow" in refused.rest, "and the reason is the burrow: %r" % refused.rest)
+        self.wait_clock(mark.t + 1.0)
+        seen = [s for s in self.tail.states[mark.states:] if s.t <= mark.t + 1.0 + STATE_INTERVAL]
+        self.check(bool(seen) and all(s.target is None for s in seen),
+                   "the refused click did not order a walk: target=none in all %d state lines after it" % len(seen))
+        moved = max((dist_xy(s, (spot.x, spot.y)) for s in seen), default=0.0)
+        self.check(moved <= MOLT_MAX_MOVE, "and the crab did not move: at most %.1f uu (need <= %.0f)" % (moved, MOLT_MAX_MOVE))
+        self.check(all(not s.molt for s in seen), "and no molt started (molt=0 in every state line)")
+        return True
+
+    def enter_molt_burrow(self, label):
+        """Click burrow MOLT_BURROW and wait until the crab has dug in. Returns True once burrow=MOLT_BURROW."""
+        screen = self.fresh_screen()
+        if screen is None or MOLT_BURROW not in screen.burrows:
+            self.check(False, "a CRABSIM_SCREEN line with burrow%d arrived" % MOLT_BURROW)
+            return False
+        pixel = screen.burrows[MOLT_BURROW]
+        mark = self.click_view(screen, pixel, "burrow%d (%.0f,%.0f)" % ((MOLT_BURROW,) + pixel))
+        if mark is None:
+            return False
+        enter = self.expect_event(mark, "burrow_enter", BURROW_ENTER_WINDOW, "%s: click on burrow%d: burrow_enter event" % (label, MOLT_BURROW))
+        if enter is None:
+            return False
+        inside = self.state_at_or_after(mark.states, enter.t + 0.5)
+        self.check(inside is not None and inside.burrow == MOLT_BURROW, "%s: burrow=%d in the state once dug in (burrow=%s)"
+                   % (label, MOLT_BURROW, None if inside is None else inside.burrow))
+        return inside is not None and inside.burrow == MOLT_BURROW
+
+    def click_molt_button(self, label):
+        """Click the HUD's molt button. Returns (mark, molt_begin event) or (None, None)."""
+        screen = self.fresh_screen()
+        if screen is None or screen.molt is None:
+            self.check(False, "a CRABSIM_SCREEN line with the molt button arrived")
+            return None, None
+        mark = self.click_view(screen, screen.molt, "the molt button (%.0f,%.0f)" % screen.molt)
+        if mark is None:
+            return None, None
+        begin = self.expect_event(mark, "molt_begin", MOLT_BEGIN_WINDOW, "%s: click on the molt button: molt_begin event" % label)
+        return mark, begin
+
+    def step_molt_cancel(self):
+        print("-- molt cancelled by leaving", flush=True)
+        if not self.enter_molt_burrow("first visit"):
+            return False
+        mark, begin = self.click_molt_button("first molt")
+        if begin is None:
+            return False
+        started = self.fresh(begin.t + 0.4)
+        self.describe("molting", started)
+        # The click on the button was not a click on the ground: no walk, and the crab is still dug in.
+        self.wait_clock(mark.t + 1.0)
+        seen = [s for s in self.tail.states[mark.states:] if s.t <= mark.t + 1.0 + STATE_INTERVAL]
+        self.check(bool(seen) and all(s.target is None and s.burrow == MOLT_BURROW for s in seen),
+                   "the button click did not walk the crab out: target=none and burrow=%d in all %d state lines after it" % (MOLT_BURROW, len(seen)))
+        self.check(started is not None and started.molt is not None and started.molt > 0.0,
+                   "the state shows a molt under way (molt=%s)" % (None if started is None else started.molt))
+        self.wait_clock(begin.t + MOLT_CANCEL_AFTER)
+        before = self.fresh(begin.t + MOLT_CANCEL_AFTER)
+        self.describe("before leaving", before)
+        self.shot("molting")
+
+        screen = self.fresh_screen()
+        if screen is None:
+            self.check(False, "a CRABSIM_SCREEN line arrived before leaving")
+            return False
+        pixel = (screen.crab[0] + AWAY_PX[0], screen.crab[1] + AWAY_PX[1])
+        leave = self.click_view(screen, pixel, "the ground %d px left of the crab" % -AWAY_PX[0])
+        if leave is None:
+            return False
+        cancel = self.expect_event(leave, "molt_cancel", MOLT_CANCEL_WINDOW, "click elsewhere: molt_cancel event")
+        if cancel is not None:
+            self.check("left" in cancel.rest, "and it says the crab left: %r" % cancel.rest)
+        self.expect_event(leave, "burrow_exit", MOLT_CANCEL_WINDOW, "and burrow_exit event")
+        self.check(self.find_event(leave.events, "molt_done", leave.t + 5.0) is None, "no molt_done was logged for the cancelled molt")
+        self.wait_idle(6.0)
+        time.sleep(0.8)
+        after = self.fresh(self.now_t() + STATE_INTERVAL)
+        self.describe("after", after)
+        if after is not None and before is not None and after.food is not None and before.food is not None:
+            self.check(after.molts == 0 and not after.molt, "no molt counted and none under way (molts=%s molt=%s)" % (after.molts, after.molt))
+            self.check(after.food >= before.food - 0.03, "no food spent: %.3f before, %.3f after (need a drop of at most 0.03)"
+                       % (before.food, after.food))
+        else:
+            self.check(False, "state lines with food arrived around the cancelled molt")
+        return True
+
+    def step_molt_done(self):
+        print("-- molt to the end", flush=True)
+        if not self.enter_molt_burrow("second visit"):
+            return
+        mark, begin = self.click_molt_button("second molt")
+        if begin is None:
+            return
+        before = self.fresh(begin.t + 0.2)
+        self.describe("begin", before)
+        self.check(before is not None and before.food is not None and before.food >= MOLT_MIN_FOOD,
+                   "food was at least %.2f to begin (food=%s)" % (MOLT_MIN_FOOD, None if before is None else before.food))
+        self.wait_clock(begin.t + MOLT_DURATION * 0.5)
+        half = self.fresh(begin.t + MOLT_DURATION * 0.5)
+        self.describe("halfway", half)
+        self.check(half is not None and half.molt is not None and 0.35 <= half.molt <= 0.65 and half.molts == 0,
+                   "halfway through: molt is about 0.5 and no molt counted yet (molt=%s molts=%s)"
+                   % (None if half is None else half.molt, None if half is None else half.molts))
+        self.shot("halfway")
+        done = self.expect_event(mark, "molt_done", MOLT_DONE_WINDOW, "molt_done event")
+        if done is None:
+            return
+        self.check(done.t - begin.t >= MOLT_DURATION - 0.5, "the molt took its ten seconds: %.1f s" % (done.t - begin.t))
+        window = [s for s in self.tail.states if begin.t <= s.t <= done.t]
+        moved = max((dist_xy(s, (before.x, before.y)) for s in window), default=0.0)
+        self.check(moved <= MOLT_MAX_MOVE and all(s.burrow == MOLT_BURROW for s in window),
+                   "the crab stayed dug in and put: moved at most %.1f uu, burrow=%d throughout" % (moved, MOLT_BURROW))
+        paid = event_detail(done, "food")
+        self.check(paid is not None and abs(paid - (0.9 - MOLT_COST)) <= MOLT_COST_TOL,
+                   "it cost 0.80 food: the store just after paying is %s (about %.2f from the 0.9 the floor holds)" % (paid, 0.9 - MOLT_COST))
+        self.check(event_detail(done, "molts") == 1, "molt_done reports molts=1: %r" % done.rest)
+        after = self.state_at_or_after(mark.states, done.t + 3.0, 4.0)
+        self.describe("molted", after)
+        if after is not None and after.scale is not None:
+            self.check(after.molts == 1, "molts=1 in the state (molts=%s)" % after.molts)
+            self.check(abs(after.scale - MOLT_GROWTH) <= MOLT_GROWTH_TOL, "the crab grew eight percent: scale=%.3f (need %.2f +/- %.2f)"
+                       % (after.scale, MOLT_GROWTH, MOLT_GROWTH_TOL))
+            self.check(after.grip is not None and after.grip >= 0.99, "grip is full (grip=%s)" % after.grip)
+            self.check(not after.molt and after.burrow == MOLT_BURROW, "the molt is over and the crab is still dug in (molt=%s burrow=%s)"
+                       % (after.molt, after.burrow))
+            self.check(not after.over, "the round is not over after one molt (over=%s)" % after.over)
+        else:
+            self.check(False, "a state line with the crab's size arrived after molt_done")
+        self.shot("molted")
+
+        # Click elsewhere: the crab comes out, bigger.
+        screen = self.fresh_screen()
+        if screen is None:
+            return
+        pixel = (screen.crab[0] + AWAY_PX[0], screen.crab[1] + AWAY_PX[1])
+        leave = self.click_view(screen, pixel, "the ground %d px left of the crab" % -AWAY_PX[0])
+        if leave is None:
+            return
+        self.expect_event(leave, "burrow_exit", MOLT_CANCEL_WINDOW, "click elsewhere: burrow_exit event")
+        self.check(self.find_event(leave.events, "molt_cancel", leave.t + 3.0) is None, "and nothing is cancelled: the molt was already done")
+        self.wait_idle(6.0)
+        self.shot("out")
+
+    # ---- scenario molt ----
+    def scenario_molt(self):
+        first = self.begin(want_mouse=True, settle=SETTLE)
+        self.describe("first", first)
+        if first.molts is None:
+            self.check(False, "the state lines carry molts (is this the molt build?)")
+            raise Abort("state lines have no molts field")
+        self.check(first.food is not None and first.food >= MOLT_MIN_FOOD, "the test food is on: food=%s (need >= %.2f)" % (first.food, MOLT_MIN_FOOD))
+        time.sleep(0.5)
+        self.shot("ready")
+        self.step_molt_refused()
+        if self.step_molt_cancel():
+            self.step_molt_done()
+        self.finish()
+
     # ---- scenario forage ----
     def scenario_forage(self):
         first = self.begin(want_mouse=True, settle=SETTLE)
@@ -984,7 +1194,7 @@ class Run:
         self.finish()
 
 
-SCENARIOS = {"basic": Run.scenario_basic, "tide": Run.scenario_tide, "forage": Run.scenario_forage}
+SCENARIOS = {"basic": Run.scenario_basic, "tide": Run.scenario_tide, "forage": Run.scenario_forage, "molt": Run.scenario_molt}
 
 
 def main():
