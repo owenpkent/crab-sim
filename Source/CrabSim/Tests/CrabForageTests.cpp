@@ -409,7 +409,7 @@ bool FCrabFeedMovesFoodTest::RunTest(const FString& Parameters)
 
 	const float Gained = Rig.Crab->GetFood() - FoodBefore + CrabFood::DrainPerSecond * 2.f;
 	const float Lost = PatchBefore - Rig.Patch(PoorPatch).Richness;
-	TestTrue(*FString::Printf(TEXT("food rises about 0.05 a second on a 0.4 patch (gained %.3f in 2 s)"), Gained), Gained > 0.07f && Gained < 0.11f);
+	TestTrue(*FString::Printf(TEXT("food rises about 0.015 a second on a 0.4 patch (gained %.3f in 2 s)"), Gained), Gained > 0.02f && Gained < 0.04f);
 	TestNearlyEqual(TEXT("the patch loses what the crab gains"), Lost, Gained, 0.012f);
 	TestTrue(TEXT("still feeding: neither bare nor full"), Rig.Crab->IsFeeding());
 	TestNearlyEqual(TEXT("the crab stood still"), static_cast<float>(FVector::Dist2D(Rig.Crab->GetActorLocation(), Rig.Patch(PoorPatch).Location)), 0.f, 10.f);
@@ -434,8 +434,8 @@ bool FCrabFeedRateTest::RunTest(const FString& Parameters)
 	const float Poor = FoodAfterThreeSeconds(PoorPatch, -1300.f, 450.f);
 	const float Rich = FoodAfterThreeSeconds(RichPatch, 1150.f, -80.f);
 	TestTrue(TEXT("both runs worked"), Poor > 0.f && Rich > 0.f);
-	TestTrue(*FString::Printf(TEXT("the rich patch fed more in the same time (%.3f against %.3f)"), Rich, Poor), Rich > Poor + 0.03f);
-	TestTrue(*FString::Printf(TEXT("about 0.07 a second on the 0.8 patch (%.3f in 3 s)"), Rich), Rich > 0.16f && Rich < 0.24f);
+	TestTrue(*FString::Printf(TEXT("the rich patch fed more in the same time (%.3f against %.3f)"), Rich, Poor), Rich > Poor + 0.01f);
+	TestTrue(*FString::Printf(TEXT("about 0.02 a second on the 0.8 patch (%.3f in 3 s)"), Rich), Rich > 0.04f && Rich < 0.07f);
 	return true;
 }
 
@@ -452,13 +452,13 @@ bool FCrabFeedEmptiesTest::RunTest(const FString& Parameters)
 	Rig.Crab->StartFeeding(PoorPatch);
 
 	float Seconds = 0.f;
-	while (Rig.Crab->IsFeeding() && Seconds < 40.f)
+	while (Rig.Crab->IsFeeding() && Seconds < 90.f)
 	{
 		Rig.World.TickSeconds(0.5f);
 		Seconds += 0.5f;
 	}
 	TestFalse(TEXT("feeding stopped by itself"), Rig.Crab->IsFeeding());
-	TestTrue(*FString::Printf(TEXT("after about a dozen seconds on a 0.4 patch (%.1f)"), Seconds), Seconds > 8.f && Seconds < 16.f);
+	TestTrue(*FString::Printf(TEXT("after about 37 seconds on a 0.4 patch (%.1f)"), Seconds), Seconds > 30.f && Seconds < 45.f);
 	TestTrue(TEXT("the patch is empty"), CrabFood::IsEmpty(Rig.Patch(PoorPatch).Richness));
 	TestTrue(TEXT("and says so"), Rig.Crab->GetMessage().Contains(TEXT("empty")));
 	const float Gained = Rig.Crab->GetFood() - FoodBefore + CrabFood::DrainPerSecond * Seconds;

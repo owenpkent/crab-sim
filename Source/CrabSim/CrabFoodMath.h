@@ -12,8 +12,8 @@ namespace CrabFood
 {
 	/** What the crab starts the round with. */
 	constexpr float StartFood = 0.25f;
-	/** Food gained per second from a full patch. */
-	constexpr float FeedRatePerSecond = 0.08f;
+	/** Food gained per second from a full patch. Slow on purpose: gathering a molt's worth takes the better part of a minute, so the tide sets the pace of a round. */
+	constexpr float FeedRatePerSecond = 0.025f;
 	/** A nearly bare patch still feeds at this share of the full rate, so every patch runs out in finite time. */
 	constexpr float FeedRateFloor = 0.3f;
 	/** Food lost per second, always. Slow: a 180 s tide costs about 0.7. */

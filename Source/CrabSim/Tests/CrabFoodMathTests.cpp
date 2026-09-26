@@ -11,7 +11,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabFoodConstantsTest, "CrabSim.Food.Constants
 bool FCrabFoodConstantsTest::RunTest(const FString& Parameters)
 {
 	TestNearlyEqual(TEXT("the crab starts a quarter full"), CrabFood::StartFood, 0.25f, 1e-6f);
-	TestNearlyEqual(TEXT("a full patch feeds at 0.08 a second"), CrabFood::FeedRatePerSecond, 0.08f, 1e-6f);
+	TestNearlyEqual(TEXT("a full patch feeds at 0.025 a second"), CrabFood::FeedRatePerSecond, 0.025f, 1e-6f);
 	TestNearlyEqual(TEXT("hunger drains 0.004 a second"), CrabFood::DrainPerSecond, 0.004f, 1e-6f);
 	TestTrue(TEXT("the soak line is shallow: ten centimetres"), CrabFood::SoakDepth > 0.f && CrabFood::SoakDepth <= 15.f);
 	TestTrue(TEXT("a tide costs a real share of the store"), CrabFood::DrainPerSecond * 180.f > 0.5f && CrabFood::DrainPerSecond * 180.f < 1.f);
@@ -41,8 +41,8 @@ bool FCrabFoodRateTest::RunTest(const FString& Parameters)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabFoodTransferTest, "CrabSim.Food.TransferIsCappedByPatchAndCrab", UE::CrabSim::Tests::FoodMath::TestFlags)
 bool FCrabFoodTransferTest::RunTest(const FString& Parameters)
 {
-	TestNearlyEqual(TEXT("one second on a full patch"), CrabFood::FeedTransfer(1.f, 0.25f, 1.f), 0.08f, 1e-5f);
-	TestNearlyEqual(TEXT("half a second gives half"), CrabFood::FeedTransfer(1.f, 0.25f, 0.5f), 0.04f, 1e-5f);
+	TestNearlyEqual(TEXT("one second on a full patch"), CrabFood::FeedTransfer(1.f, 0.25f, 1.f), 0.025f, 1e-5f);
+	TestNearlyEqual(TEXT("half a second gives half"), CrabFood::FeedTransfer(1.f, 0.25f, 0.5f), 0.0125f, 1e-5f);
 	TestNearlyEqual(TEXT("no time gives nothing"), CrabFood::FeedTransfer(1.f, 0.25f, 0.f), 0.f, 1e-6f);
 	TestNearlyEqual(TEXT("negative time gives nothing"), CrabFood::FeedTransfer(1.f, 0.25f, -1.f), 0.f, 1e-6f);
 	TestNearlyEqual(TEXT("a bare patch gives nothing"), CrabFood::FeedTransfer(0.f, 0.25f, 5.f), 0.f, 1e-6f);
@@ -69,8 +69,8 @@ bool FCrabFoodEmptiesTest::RunTest(const FString& Parameters)
 		Seconds += 1.f / 60.f;
 	}
 	TestTrue(*FString::Printf(TEXT("the patch runs out (after %.1f s)"), Seconds), CrabFood::IsEmpty(Richness));
-	TestTrue(TEXT("not instantly"), Seconds > 10.f);
-	TestTrue(TEXT("and not so slowly that a person waits it out"), Seconds < 40.f);
+	TestTrue(TEXT("not instantly: a full patch is a long sift"), Seconds > 40.f);
+	TestTrue(TEXT("and not so slowly that a person waits it out"), Seconds < 100.f);
 	TestTrue(*FString::Printf(TEXT("almost all of it reached the crab (%.3f)"), Gained), Gained > 0.99f && Gained <= 1.f + 1e-4f);
 
 	// A poorer patch gives less and runs out sooner.
