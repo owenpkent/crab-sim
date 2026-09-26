@@ -7,8 +7,9 @@
 
 /**
  * On-screen readout: a tide gauge with a marker for how high the crab is
- * standing, the crab's grip and food, a short message line, and the dig button.
- * Drawn with the canvas, so it needs no assets. The button is only drawn here:
+ * standing, the crab's grip and food, its molts, a short message line, the dig
+ * and molt buttons, and the results panel once the round is won.
+ * Drawn with the canvas, so it needs no assets. The buttons are only drawn here:
  * the controller reads the click, using the same layout (CrabHudMath.h).
  */
 UCLASS()
@@ -24,6 +25,9 @@ private:
 	void DrawGripBar(const ACrabPawn& Crab, float Scale);
 	void DrawFoodBar(const ACrabPawn& Crab, float Scale);
 	void DrawDigButton(const ACrabPawn& Crab, float Scale);
+	void DrawMoltButton(const ACrabPawn& Crab, float Scale);
+	void DrawMoltPips(const ACrabPawn& Crab, float Scale);
+	void DrawResults(const ACrabPawn& Crab, float Scale);
 	void DrawMessage(const ACrabPawn& Crab, float Scale);
 	void DrawHints(float Scale);
 };

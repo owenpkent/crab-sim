@@ -82,6 +82,11 @@ void ACrabPlayerController::ResolveTarget(const ACrabPawn& Crab, const FVector& 
 
 void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 {
+	// The results panel is up: the world is held still until the button starts a new round.
+	if (Crab.IsRoundOver())
+	{
+		return;
+	}
 	const ACrabBeach* Beach = Crab.GetBeach();
 
 	if (Crab.IsInBurrow())
@@ -119,6 +124,21 @@ void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 
 void ACrabPlayerController::HandleLeftPress(ACrabPawn& Crab, const FVector2D& ScreenPos, const FVector2D& ViewSize, const FVector* GroundPoint)
 {
+	if (Crab.IsRoundOver())
+	{
+		if (CrabHud::HitsNewRoundButton(ViewSize.X, ViewSize.Y, ScreenPos))
+		{
+			Crab.StartNewRound();
+		}
+		bSwallowHold = true;
+		return;
+	}
+	if (CrabHud::HitsMoltButton(ViewSize.X, ViewSize.Y, ScreenPos))
+	{
+		Crab.StartMolt();
+		bSwallowHold = true;
+		return;
+	}
 	if (CrabHud::HitsDigButton(ViewSize.X, ViewSize.Y, ScreenPos))
 	{
 		Crab.StartDig();
@@ -134,7 +154,7 @@ void ACrabPlayerController::HandleLeftPress(ACrabPawn& Crab, const FVector2D& Sc
 
 void ACrabPlayerController::HandleHold(ACrabPawn& Crab, const FVector& Point)
 {
-	if (Crab.IsInBurrow() || bSwallowHold)
+	if (Crab.IsInBurrow() || Crab.IsRoundOver() || bSwallowHold)
 	{
 		return;
 	}
@@ -198,7 +218,9 @@ void ACrabPlayerController::LogScreenPositions(float DeltaTime)
 		}
 	}
 	const FVector2D DigCentre = CrabHud::DigButtonRect(ViewX, ViewY).GetCenter();
-	Line += FString::Printf(TEXT(" dig=%.0f,%.0f"), DigCentre.X, DigCentre.Y);
+	const FVector2D MoltCentre = CrabHud::MoltButtonRect(ViewX, ViewY).GetCenter();
+	const FVector2D NewRoundCentre = CrabHud::NewRoundButtonRect(ViewX, ViewY).GetCenter();
+	Line += FString::Printf(TEXT(" dig=%.0f,%.0f molt=%.0f,%.0f newround=%.0f,%.0f"), DigCentre.X, DigCentre.Y, MoltCentre.X, MoltCentre.Y, NewRoundCentre.X, NewRoundCentre.Y);
 	UE_LOG(LogCrabSim, Log, TEXT("%s"), *Line);
 }
 
@@ -236,13 +258,14 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 	}
 	else if (bHavePoint)
 	{
-		// The cursor over the dig button is over the button, not over the ground behind it.
+		// The cursor over a HUD button is over the button, not over the ground behind it.
 		if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
 		{
 			bSwallowHold = false;
 			HandleClick(*Crab, Point);
 		}
-		else if (IsInputKeyDown(EKeys::LeftMouseButton) && !(bHaveMouse && CrabHud::HitsDigButton(View.X, View.Y, Screen)))
+		else if (IsInputKeyDown(EKeys::LeftMouseButton)
+			&& !(bHaveMouse && (CrabHud::HitsDigButton(View.X, View.Y, Screen) || CrabHud::HitsMoltButton(View.X, View.Y, Screen))))
 		{
 			HandleHold(*Crab, Point);
 		}

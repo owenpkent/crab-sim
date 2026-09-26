@@ -22,6 +22,8 @@ struct FCrabBurrow
 	float FloodDepth = 50.f;
 	/** Dug by the crab during the round, not part of the beach. */
 	bool bDug = false;
+	/** The hole and the rim drawn for it, so a dug burrow can be taken away again. */
+	TArray<UStaticMeshComponent*> Parts;
 };
 
 /** A patch of algae-rich mud the crab can sift for food. Location is on the ground. */
@@ -74,6 +76,10 @@ public:
 	bool IsTideRising() const { return Tide.IsRisingAt(TideClock); }
 	float GetSecondsToTurn() const { return Tide.SecondsToTurnAt(TideClock); }
 
+	/** A frozen tide holds still, swell and all. The results panel freezes it. */
+	void SetTideFrozen(bool bFrozen) { bTideFrozen = bFrozen; }
+	bool IsTideFrozen() const { return bTideFrozen; }
+
 	// --- Ground and water ---------------------------------------------------
 
 	float GetGroundHeight(float X, float Y) const;
@@ -117,6 +123,11 @@ public:
 	/** Take up to Amount of richness from a patch. Returns what it gave, never more than it held. */
 	float TakeFood(int32 Index, float Amount);
 
+	// --- New round -----------------------------------------------------------
+
+	/** Back to how a round begins: tide at low water and running, every patch full and fresh, dug burrows gone. */
+	void ResetForNewRound();
+
 	/** The generated meshes, for tests and tooling. Null before BeginPlay. */
 	UProceduralMeshComponent* GetTerrainMesh() const { return Terrain; }
 	UProceduralMeshComponent* GetWaterMesh() const { return Water; }
@@ -144,7 +155,8 @@ private:
 	void BuildBurrows();
 	void BuildFoodPatches();
 	void BuildProps();
-	void AddBurrowVisual(const FVector& Location);
+	/** Draws the hole and its rim. Returns the pieces. */
+	TArray<UStaticMeshComponent*> AddBurrowVisual(const FVector& Location);
 	void UpdateFoodPatches();
 	void RefreshPatchVisual(int32 Index);
 	void PushTideToMaterials();
@@ -182,4 +194,5 @@ private:
 	TArray<FCrabFoodPatch> FoodPatches;
 	TArray<FPatchVisual> PatchVisuals;
 	float TideClock = 0.f;
+	bool bTideFrozen = false;
 };

@@ -3,6 +3,7 @@
 #include "CrabBeach.h"
 #include "CrabDigMath.h"
 #include "CrabHudMath.h"
+#include "CrabMoltMath.h"
 #include "CrabPawn.h"
 
 #include "Engine/Canvas.h"
@@ -21,6 +22,14 @@ namespace
 	const FLinearColor DigReady = FLinearColor(0.85f, 0.6f, 0.2f, 0.95f);
 	const FLinearColor DigBusy = FLinearColor(0.4f, 0.62f, 0.25f, 0.95f);
 	const FLinearColor DigOff = FLinearColor(0.22f, 0.22f, 0.22f, 0.8f);
+	const FLinearColor MoltReady = FLinearColor(0.4f, 0.72f, 0.88f, 0.95f);
+	const FLinearColor MoltBusy = FLinearColor(0.24f, 0.46f, 0.66f, 0.95f);
+	const FLinearColor PipEarned = FLinearColor(0.98f, 0.78f, 0.3f, 1.f);
+	const FLinearColor PipEmpty = FLinearColor(0.1f, 0.1f, 0.1f, 0.7f);
+	const FLinearColor Gold = FLinearColor(1.f, 0.85f, 0.35f, 1.f);
+	const FLinearColor NewRoundFill = FLinearColor(0.55f, 0.8f, 0.2f, 0.98f);
+	const FLinearColor ButtonInk = FLinearColor(0.05f, 0.04f, 0.02f, 1.f);
+	const FLinearColor Border = FLinearColor(0.f, 0.f, 0.f, 0.6f);
 }
 
 void ACrabHUD::DrawHUD()
@@ -42,9 +51,18 @@ void ACrabHUD::DrawHUD()
 	}
 	DrawGripBar(*Crab, Scale);
 	DrawFoodBar(*Crab, Scale);
-	DrawDigButton(*Crab, Scale);
+	DrawMoltPips(*Crab, Scale);
+	if (!Crab->IsRoundOver())
+	{
+		DrawDigButton(*Crab, Scale);
+		DrawMoltButton(*Crab, Scale);
+	}
 	DrawMessage(*Crab, Scale);
 	DrawHints(Scale);
+	if (Crab->IsRoundOver())
+	{
+		DrawResults(*Crab, Scale);
+	}
 }
 
 void ACrabHUD::DrawTideGauge(const ACrabPawn& Crab, const ACrabBeach& Beach, float Scale)
@@ -78,27 +96,40 @@ void ACrabHUD::DrawTideGauge(const ACrabPawn& Crab, const ACrabBeach& Beach, flo
 void ACrabHUD::DrawGripBar(const ACrabPawn& Crab, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
-	const float Width = 300.f * Scale;
-	const float Height = 16.f * Scale;
-	const float X = (Canvas->SizeX - Width) * 0.5f;
-	const float Y = Canvas->SizeY - 70.f * Scale;
+	const FBox2D Bar = CrabHud::GripBarRect(Canvas->SizeX, Canvas->SizeY);
+	const float Width = Bar.GetSize().X;
+	const float Height = Bar.GetSize().Y;
+	const float X = Bar.Min.X;
+	const float Y = Bar.Min.Y;
 
 	const float Grip = Crab.GetGrip();
 	DrawRect(Panel, X - 4.f * Scale, Y - 4.f * Scale, Width + 8.f * Scale, Height + 8.f * Scale);
 	const FLinearColor Fill = FMath::Lerp(FLinearColor(0.95f, 0.25f, 0.15f), FLinearColor(0.35f, 0.85f, 0.35f), FMath::Clamp(Grip * 1.4f, 0.f, 1.f));
 	DrawRect(Fill, X, Y, Width * Grip, Height);
 	DrawText(TEXT("GRIP"), Text, X, Y - 26.f * Scale, Font, Scale * 0.8f);
+
+	// A soft crab cannot hold more than half its grip: a mark where the cap is, and a tag with the time left.
+	if (Crab.IsSoft())
+	{
+		DrawRect(Wet, X + Width * CrabMolt::Tuning::SoftGripCap - Scale, Y - 4.f * Scale, 2.f * Scale, Height + 8.f * Scale);
+		const FString Tag = FString::Printf(TEXT("SOFT %ds"), FMath::CeilToInt(Crab.GetSoftRemaining()));
+		float TagW = 0.f;
+		float TagH = 0.f;
+		GetTextSize(Tag, TagW, TagH, Font, Scale * 0.9f);
+		DrawRect(Panel, X + 70.f * Scale, Y - 32.f * Scale, TagW + 16.f * Scale, TagH + 8.f * Scale);
+		DrawText(Tag, Wet, X + 78.f * Scale, Y - 28.f * Scale, Font, Scale * 0.9f);
+	}
 }
 
 void ACrabHUD::DrawFoodBar(const ACrabPawn& Crab, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
 	// Beside the grip bar, on its right.
-	const float GripRight = (Canvas->SizeX + 300.f * Scale) * 0.5f;
-	const float Width = 200.f * Scale;
-	const float Height = 16.f * Scale;
-	const float X = GripRight + 36.f * Scale;
-	const float Y = Canvas->SizeY - 70.f * Scale;
+	const FBox2D Bar = CrabHud::FoodBarRect(Canvas->SizeX, Canvas->SizeY);
+	const float Width = Bar.GetSize().X;
+	const float Height = Bar.GetSize().Y;
+	const float X = Bar.Min.X;
+	const float Y = Bar.Min.Y;
 
 	const float Food = Crab.GetFood();
 	DrawRect(Panel, X - 4.f * Scale, Y - 4.f * Scale, Width + 8.f * Scale, Height + 8.f * Scale);
@@ -118,9 +149,9 @@ void ACrabHUD::DrawDigButton(const ACrabPawn& Crab, float Scale)
 	const bool bReady = Result == CrabDig::EResult::Ok;
 
 	const FLinearColor Fill = bDigging ? DigBusy : (bReady ? DigReady : DigOff);
-	const FLinearColor Ink = (bDigging || bReady) ? FLinearColor(0.05f, 0.04f, 0.02f, 1.f) : TextDim;
-	const float Border = 3.f * Scale;
-	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.6f), Rect.Min.X - Border, Rect.Min.Y - Border, Size.X + 2.f * Border, Size.Y + 2.f * Border);
+	const FLinearColor Ink = (bDigging || bReady) ? ButtonInk : TextDim;
+	const float Edge = 3.f * Scale;
+	DrawRect(Border, Rect.Min.X - Edge, Rect.Min.Y - Edge, Size.X + 2.f * Edge, Size.Y + 2.f * Edge);
 	DrawRect(Fill, Rect.Min.X, Rect.Min.Y, Size.X, Size.Y);
 
 	const FString Label = bDigging ? TEXT("DIGGING") : TEXT("DIG");
@@ -157,6 +188,126 @@ void ACrabHUD::DrawDigButton(const ACrabPawn& Crab, float Scale)
 	}
 }
 
+void ACrabHUD::DrawMoltButton(const ACrabPawn& Crab, float Scale)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	const FBox2D Rect = CrabHud::MoltButtonRect(Canvas->SizeX, Canvas->SizeY);
+	const FVector2D Size = Rect.GetSize();
+	const CrabMolt::EResult Result = Crab.CheckMolt();
+	const bool bMolting = Crab.IsMolting();
+	const bool bReady = Result == CrabMolt::EResult::Ok;
+
+	const FLinearColor Fill = bMolting ? MoltBusy : (bReady ? MoltReady : DigOff);
+	const FLinearColor Ink = (bMolting || bReady) ? ButtonInk : TextDim;
+	const float Edge = 3.f * Scale;
+	DrawRect(Border, Rect.Min.X - Edge, Rect.Min.Y - Edge, Size.X + 2.f * Edge, Size.Y + 2.f * Edge);
+	DrawRect(Fill, Rect.Min.X, Rect.Min.Y, Size.X, Size.Y);
+
+	auto Centred = [&](const FString& Line, float TextScale, float Down, const FLinearColor& Colour)
+	{
+		float W = 0.f;
+		float H = 0.f;
+		GetTextSize(Line, W, H, Font, TextScale);
+		DrawText(Line, Colour, Rect.Min.X + (Size.X - W) * 0.5f, Rect.Min.Y + Size.Y * Down, Font, TextScale);
+	};
+
+	if (bMolting)
+	{
+		// A ring round the button fills clockwise from the top as the molt goes on, with the seconds left inside.
+		const FVector2D Middle = Rect.GetCenter();
+		const float Radius = Size.X * 0.42f;
+		const int32 Segments = 72;
+		const int32 Filled = FMath::RoundToInt(Segments * Crab.GetMoltProgress());
+		for (int32 Segment = 0; Segment < Segments; ++Segment)
+		{
+			const float A0 = 2.f * PI * Segment / Segments;
+			const float A1 = 2.f * PI * (Segment + 1) / Segments;
+			DrawLine(Middle.X + Radius * FMath::Sin(A0), Middle.Y - Radius * FMath::Cos(A0),
+				Middle.X + Radius * FMath::Sin(A1), Middle.Y - Radius * FMath::Cos(A1),
+				Segment < Filled ? FLinearColor(0.98f, 0.95f, 0.6f, 1.f) : FLinearColor(0.f, 0.f, 0.f, 0.45f), 8.f * Scale);
+		}
+		const int32 SecondsLeft = FMath::CeilToInt(CrabMolt::Tuning::Duration * (1.f - Crab.GetMoltProgress()));
+		Centred(FString::Printf(TEXT("%d"), SecondsLeft), Scale * 2.2f, 0.3f, Ink);
+		Centred(TEXT("MOLTING"), Scale * 0.8f, 0.68f, Ink);
+	}
+	else
+	{
+		Centred(TEXT("MOLT"), Scale * 2.2f, 0.28f, Ink);
+		Centred(FString::Printf(TEXT("%.0f%% food"), CrabMolt::Tuning::FoodCost * 100.f), Scale * 0.8f, 0.68f, Ink);
+	}
+
+	// Why it is greyed out, above the button and lined up with its right edge.
+	FString Reason = bMolting ? FString(TEXT("Stay put: leaving cancels")) : FString(CrabMolt::ReasonText(Result));
+	if (!Reason.IsEmpty())
+	{
+		float ReasonW = 0.f;
+		float ReasonH = 0.f;
+		GetTextSize(Reason, ReasonW, ReasonH, Font, Scale * 0.9f);
+		DrawRect(Panel, Rect.Max.X - ReasonW - 8.f * Scale, Rect.Min.Y - 40.f * Scale, ReasonW + 16.f * Scale, ReasonH + 8.f * Scale);
+		DrawText(Reason, Text, Rect.Max.X - ReasonW, Rect.Min.Y - 36.f * Scale, Font, Scale * 0.9f);
+	}
+}
+
+void ACrabHUD::DrawMoltPips(const ACrabPawn& Crab, float Scale)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	for (int32 Index = 0; Index < CrabMolt::Tuning::MoltsToWin; ++Index)
+	{
+		const FBox2D Pip = CrabHud::MoltPipRect(Canvas->SizeX, Canvas->SizeY, Index);
+		const FVector2D Size = Pip.GetSize();
+		const float Edge = 3.f * Scale;
+		DrawRect(Border, Pip.Min.X - Edge, Pip.Min.Y - Edge, Size.X + 2.f * Edge, Size.Y + 2.f * Edge);
+		DrawRect(Index < Crab.GetMolts() ? PipEarned : PipEmpty, Pip.Min.X, Pip.Min.Y, Size.X, Size.Y);
+	}
+	const FBox2D Last = CrabHud::MoltPipRect(Canvas->SizeX, Canvas->SizeY, CrabMolt::Tuning::MoltsToWin - 1);
+	DrawText(TEXT("MOLTS"), Text, Last.Max.X + 14.f * Scale, Last.Min.Y + 3.f * Scale, Font, Scale * 0.8f);
+}
+
+void ACrabHUD::DrawResults(const ACrabPawn& Crab, float Scale)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	const float ViewW = Canvas->SizeX;
+	const float ViewH = Canvas->SizeY;
+	DrawRect(FLinearColor(0.f, 0.f, 0.f, 0.35f), 0.f, 0.f, ViewW, ViewH);
+
+	const FBox2D PanelRect = CrabHud::ResultsPanelRect(ViewW, ViewH);
+	const FVector2D PanelSize = PanelRect.GetSize();
+	const float Edge = 4.f * Scale;
+	DrawRect(Gold, PanelRect.Min.X - Edge, PanelRect.Min.Y - Edge, PanelSize.X + 2.f * Edge, PanelSize.Y + 2.f * Edge);
+	DrawRect(FLinearColor(0.04f, 0.06f, 0.08f, 0.94f), PanelRect.Min.X, PanelRect.Min.Y, PanelSize.X, PanelSize.Y);
+
+	float TitleW = 0.f;
+	float TitleH = 0.f;
+	GetTextSize(TEXT("Fully grown!"), TitleW, TitleH, Font, Scale * 2.6f);
+	DrawText(TEXT("Fully grown!"), Gold, PanelRect.Min.X + (PanelSize.X - TitleW) * 0.5f, PanelRect.Min.Y + 22.f * Scale, Font, Scale * 2.6f);
+
+	struct FRow { FString Label; FString Value; FLinearColor Colour; };
+	TArray<FRow> Rows;
+	Rows.Add({TEXT("Time"), CrabMolt::TimeText(Crab.GetRoundSeconds()), Text});
+	Rows.Add({TEXT("Best time"), CrabMolt::TimeText(Crab.GetBestSeconds()) + (Crab.IsNewBest() ? TEXT("  NEW BEST") : TEXT("")), Crab.IsNewBest() ? Gold : Text});
+	Rows.Add({TEXT("Molts"), FString::Printf(TEXT("%d"), Crab.GetMolts()), Text});
+	Rows.Add({TEXT("Burrows dug"), FString::Printf(TEXT("%d"), Crab.GetRoundDug()), Text});
+	Rows.Add({TEXT("Food eaten"), FString::Printf(TEXT("%.1f"), Crab.GetRoundFoodEaten()), Text});
+	for (int32 Index = 0; Index < Rows.Num(); ++Index)
+	{
+		const float Y = PanelRect.Min.Y + (112.f + 40.f * Index) * Scale;
+		float ValueW = 0.f;
+		float ValueH = 0.f;
+		GetTextSize(Rows[Index].Value, ValueW, ValueH, Font, Scale * 1.3f);
+		DrawText(Rows[Index].Label, TextDim, PanelRect.Min.X + 60.f * Scale, Y, Font, Scale * 1.3f);
+		DrawText(Rows[Index].Value, Rows[Index].Colour, PanelRect.Max.X - 60.f * Scale - ValueW, Y, Font, Scale * 1.3f);
+	}
+
+	const FBox2D Button = CrabHud::NewRoundButtonRect(ViewW, ViewH);
+	const FVector2D ButtonSize = Button.GetSize();
+	DrawRect(Border, Button.Min.X - Edge, Button.Min.Y - Edge, ButtonSize.X + 2.f * Edge, ButtonSize.Y + 2.f * Edge);
+	DrawRect(NewRoundFill, Button.Min.X, Button.Min.Y, ButtonSize.X, ButtonSize.Y);
+	float LabelW = 0.f;
+	float LabelH = 0.f;
+	GetTextSize(TEXT("NEW ROUND"), LabelW, LabelH, Font, Scale * 2.f);
+	DrawText(TEXT("NEW ROUND"), ButtonInk, Button.Min.X + (ButtonSize.X - LabelW) * 0.5f, Button.Min.Y + (ButtonSize.Y - LabelH) * 0.5f, Font, Scale * 2.f);
+}
+
 void ACrabHUD::DrawMessage(const ACrabPawn& Crab, float Scale)
 {
 	const float Alpha = Crab.GetMessageAlpha();
@@ -177,6 +328,6 @@ void ACrabHUD::DrawMessage(const ACrabPawn& Crab, float Scale)
 void ACrabHUD::DrawHints(float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
-	DrawText(TEXT("Click: walk    Hold: follow    Right click: dash    Click the crab: dance    Click a burrow: dig in    Click green mud: eat    DIG button: new burrow"),
+	DrawText(TEXT("Click: walk    Hold: follow    Right click: dash    Click the crab: dance    Click a burrow: dig in    Click green mud: eat    DIG: new burrow    MOLT: in a burrow"),
 		TextDim, 24.f * Scale, Canvas->SizeY - 30.f * Scale, Font, Scale * 0.7f);
 }

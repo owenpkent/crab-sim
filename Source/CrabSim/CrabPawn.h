@@ -5,6 +5,7 @@
 #include "GameFramework/Character.h"
 #include "CrabDigMath.h"
 #include "CrabFoodMath.h"
+#include "CrabMoltMath.h"
 #include "CrabPawn.generated.h"
 
 class ACrabBeach;
@@ -29,7 +30,7 @@ enum class ECrabAnim : uint8
  * The player's crab. Walks toward a target point and scuttles: it turns so a
  * side faces the way it travels, and side-on travel is faster than forward
  * travel. It can dash, dance, dig into a burrow, sift food patches, dig new
- * burrows, and it has to keep its grip against the tide. The visual is the skeletal fiddler crab from /Game/Crab
+ * burrows, molt in a burrow until it is fully grown, and it has to keep its grip against the tide. The visual is the skeletal fiddler crab from /Game/Crab
  * when that exists, and a crab built from engine basic shapes when it does not.
  */
 UCLASS()
@@ -109,10 +110,50 @@ public:
 	/** 0 to 1 through the dig. */
 	float GetDigProgress() const { return bDigging ? CrabDig::Progress(DigElapsed) : 0.f; }
 
+	// --- Molting ----------------------------------------------------------------
+
+	/** Ok if the crab could begin a molt right now, otherwise why not. */
+	CrabMolt::EResult CheckMolt() const;
+
+	/** Begin a molt in the burrow the crab is in. False, with a message, if CheckMolt refuses. */
+	bool StartMolt();
+	/** Give up the molt. It costs nothing. Leaving the burrow does this. */
+	void CancelMolt(const TCHAR* Reason = TEXT("left"));
+	bool IsMolting() const { return bMolting; }
+	/** 0 to 1 through the molt. */
+	float GetMoltProgress() const { return bMolting ? CrabMolt::Progress(MoltElapsed) : 0.f; }
+	/** Molts finished this round. */
+	int32 GetMolts() const { return Molts; }
+	/** The size the crab is growing to, as a multiple of its starting size. Only its look changes. */
+	float GetGrowthScale() const { return CrabMolt::GrowthScale(Molts); }
+	/** The size it looks now, easing toward GetGrowthScale after a molt. */
+	float GetShownGrowth() const { return ShownGrowth; }
+	/** Soft after a flood forced it out of a molt: its grip cannot rise above half for a while. */
+	bool IsSoft() const { return SoftRemaining > 0.f; }
+	float GetSoftRemaining() const { return SoftRemaining; }
+
+	// --- The round ------------------------------------------------------------------
+
+	/** Won at three molts. The results panel shows and the tide, feeding, digging and walking are ignored until a new round. */
+	bool IsRoundOver() const { return bRoundOver; }
+	/** Seconds since the round began. Stops when it is won. */
+	float GetRoundSeconds() const { return RoundSeconds; }
+	int32 GetRoundDug() const { return RoundDug; }
+	float GetRoundFoodEaten() const { return RoundFoodEaten; }
+	/** The best winning time this session, seconds. 0 before the first win. */
+	float GetBestSeconds() const { return BestSeconds; }
+	bool IsNewBest() const { return bNewBest; }
+
+	/** Reset the world and the crab: tide, food, patches, dug burrows, molts, and the crab back at the start. */
+	void StartNewRound();
+	/** Where a new round puts the crab, world XY. The game mode sets it. */
+	void SetRoundStart(const FVector2D& XY) { RoundStartXY = XY; }
+
 	// --- Survival -------------------------------------------------------------
 
 	/** 1 full, 0 swept away. */
 	float GetGrip() const { return Grip; }
+	void SetGrip(float NewGrip);
 	float GetWaterDepth() const { return WaterDepth; }
 	int32 GetSweptCount() const { return SweptCount; }
 	/** How many separate times the surge has taken hold of the crab. */
@@ -171,12 +212,20 @@ private:
 	void UpdateBurrowSink(float DeltaSeconds);
 	void UpdateWalking(float DeltaSeconds);
 	void UpdateForaging(float DeltaSeconds);
+	void UpdateMolting(float DeltaSeconds);
+	void UpdateGrowth(float DeltaSeconds);
+	void ApplyTestFood();
 	void UpdateAnimation(float DeltaSeconds);
 	void UpdateProceduralDance(float DeltaSeconds);
 	void UpdateWorkPose(float DeltaSeconds);
 	/** Stop feeding and say why on the HUD. */
 	void EndFeeding(const TCHAR* Text);
 	void FinishDig();
+	void FinishMolt();
+	void BeginSoft();
+	void WinRound();
+	/** Z of the shape-built visual's origin: it grows around its middle, so its feet are put back on the ground. */
+	float VisualBase() const;
 	void SetAnimState(ECrabAnim NewState);
 	void SweepOut();
 	/** Show a line on the HUD. With bReplaceCurrent false it waits its turn: it is dropped if another message is still showing. */
@@ -224,12 +273,17 @@ private:
 	bool bDancing = false;
 	bool bUseSkeletalMesh = false;
 	bool bDigging = false;
+	bool bMolting = false;
+	bool bRoundOver = false;
+	bool bNewBest = false;
 	int32 PendingBurrow = INDEX_NONE;
 	int32 PendingPatch = INDEX_NONE;
 	int32 FeedingPatch = INDEX_NONE;
 	int32 CurrentBurrow = INDEX_NONE;
 	int32 SweptCount = 0;
 	int32 SurgeCount = 0;
+	int32 Molts = 0;
+	int32 RoundDug = 0;
 	float DashTimeRemaining = 0.f;
 	float DashCooldownRemaining = 0.f;
 	float StateLogTimer = 0.f;
@@ -237,6 +291,19 @@ private:
 	float Food = CrabFood::StartFood;
 	float FeedGained = 0.f;
 	float DigElapsed = 0.f;
+	float MoltElapsed = 0.f;
+	float MoltClock = 0.f;
+	float MoltBlend = 0.f;
+	/** Seconds the crab stays showing after a molt, before it settles out of sight. */
+	float MoltAfterglow = 0.f;
+	float SoftRemaining = 0.f;
+	float ShownGrowth = 1.f;
+	float DisplayScale = 1.f;
+	float RoundSeconds = 0.f;
+	float RoundFoodEaten = 0.f;
+	float BestSeconds = 0.f;
+	float AppliedStartFood = -1.f;
+	FVector2D RoundStartXY = FVector2D::ZeroVector;
 	float FeedBlend = 0.f;
 	float DigBlend = 0.f;
 	float WorkClock = 0.f;

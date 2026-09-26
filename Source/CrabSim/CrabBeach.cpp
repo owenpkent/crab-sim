@@ -198,7 +198,10 @@ void ACrabBeach::SetTideClock(float Seconds)
 void ACrabBeach::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	TideClock += DeltaSeconds * CVarTideSpeed.GetValueOnGameThread();
+	if (!bTideFrozen)
+	{
+		TideClock += DeltaSeconds * CVarTideSpeed.GetValueOnGameThread();
+	}
 	if (Water)
 	{
 		Water->SetWorldLocation(FVector(0.f, 0.f, GetSurfaceLevel()));
@@ -296,9 +299,37 @@ int32 ACrabBeach::AddDugBurrow(const FVector& Where)
 	Burrow.Radius = BurrowRadius;
 	Burrow.bDug = true;
 	Burrow.Location = FVector(Where.X, Where.Y, CrabTerrain::Height(Where.X, Where.Y));
+	Burrow.Parts = AddBurrowVisual(Burrow.Location);
 	Burrows.Add(Burrow);
-	AddBurrowVisual(Burrow.Location);
 	return Burrows.Num() - 1;
+}
+
+void ACrabBeach::ResetForNewRound()
+{
+	// The dug burrows go, the beach's own stay where they are with the indices they have.
+	for (int32 Index = Burrows.Num() - 1; Index >= 0; --Index)
+	{
+		if (!Burrows[Index].bDug)
+		{
+			continue;
+		}
+		for (UStaticMeshComponent* Part : Burrows[Index].Parts)
+		{
+			Shapes.Remove(Part);
+			Part->DestroyComponent();
+		}
+		Burrows.RemoveAt(Index);
+	}
+
+	for (int32 Index = 0; Index < FoodPatches.Num(); ++Index)
+	{
+		FoodPatches[Index].Richness = FoodPatches[Index].FullRichness;
+		FoodPatches[Index].bSoaked = false;
+		RefreshPatchVisual(Index);
+	}
+
+	bTideFrozen = false;
+	SetTideClock(0.f);
 }
 
 int32 ACrabBeach::FindFoodPatchAt(const FVector& Point) const
@@ -525,19 +556,20 @@ void ACrabBeach::BuildBurrows()
 		FCrabBurrow Burrow;
 		Burrow.Radius = BurrowRadius;
 		Burrow.Location = FVector(Spot.X, Spot.Y, CrabTerrain::Height(Spot.X, Spot.Y));
+		Burrow.Parts = AddBurrowVisual(Burrow.Location);
 		Burrows.Add(Burrow);
-		AddBurrowVisual(Burrow.Location);
 	}
 }
 
-void ACrabBeach::AddBurrowVisual(const FVector& Location)
+TArray<UStaticMeshComponent*> ACrabBeach::AddBurrowVisual(const FVector& Location)
 {
 	UStaticMesh* Cylinder = LoadEngineShape(TEXT("Cylinder"));
 	UStaticMesh* Sphere = LoadEngineShape(TEXT("Sphere"));
 
+	TArray<UStaticMeshComponent*> Parts;
 	const FVector Normal = CrabTerrain::Normal(Location.X, Location.Y);
 	const FRotator Tilt = FRotationMatrix::MakeFromZ(Normal).Rotator();
-	AddShape(Cylinder, Location + Normal * 2.f, Tilt, FVector(1.5f, 1.5f, 0.02f), &BurrowColor, false);
+	Parts.Add(AddShape(Cylinder, Location + Normal * 2.f, Tilt, FVector(1.5f, 1.5f, 0.02f), &BurrowColor, false));
 
 	// A low rim of sand thrown up around the hole.
 	for (int32 Lump = 0; Lump < 10; ++Lump)
@@ -545,8 +577,9 @@ void ACrabBeach::AddBurrowVisual(const FVector& Location)
 		const float Angle = 2.f * PI * Lump / 10.f;
 		const float RimX = Location.X + FMath::Cos(Angle) * 78.f;
 		const float RimY = Location.Y + FMath::Sin(Angle) * 78.f;
-		AddShape(Sphere, FVector(RimX, RimY, CrabTerrain::Height(RimX, RimY) + 2.f), FRotator::ZeroRotator, FVector(0.36f, 0.36f, 0.14f), &RimColor, false);
+		Parts.Add(AddShape(Sphere, FVector(RimX, RimY, CrabTerrain::Height(RimX, RimY) + 2.f), FRotator::ZeroRotator, FVector(0.36f, 0.36f, 0.14f), &RimColor, false));
 	}
+	return Parts;
 }
 
 void ACrabBeach::BuildFoodPatches()

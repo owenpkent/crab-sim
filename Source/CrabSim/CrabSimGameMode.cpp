@@ -74,6 +74,7 @@ void ACrabSimGameMode::PlaceCrabsOnTheGround()
 			const float Half = Crab->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 			const float Ground = Beach->GetGroundHeight(StartXY.X, StartXY.Y);
 			Crab->SetActorLocation(FVector(StartXY.X, StartXY.Y, Ground + Half + 5.f), false, nullptr, ETeleportType::TeleportPhysics);
+			Crab->SetRoundStart(StartXY);
 		}
 	}
 }

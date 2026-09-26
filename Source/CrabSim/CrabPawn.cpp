@@ -47,6 +47,16 @@ static TAutoConsoleVariable<int32> CVarCrabPlainMaterial(
 	TEXT("1 draws the skeletal crab in a plain orange engine material, to tell a broken material from a broken mesh."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<float> CVarStartFood(
+	TEXT("CrabSim.StartFood"), -1.f,
+	TEXT("Test only. 0 to 1 sets the crab's food to this once, whenever the value changes. Negative (the default) leaves food alone."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarFoodFloor(
+	TEXT("CrabSim.FoodFloor"), -1.f,
+	TEXT("Test only. 0 to 1 keeps the crab's food from dropping below this, so a recording can molt again and again. Negative (the default) is off."),
+	ECVF_Default);
+
 namespace
 {
 	constexpr float StateLogInterval = 0.2f;
@@ -61,6 +71,13 @@ namespace
 	constexpr float SinkSpeed = 2.2f;
 	// Depth the water must fall below the surge line before the surge is over, uu.
 	constexpr float SurgeHysteresis = 10.f;
+	// A molting crab settles this far into its burrow (0 standing, 1 out of sight), so it can be seen, and pulses.
+	constexpr float MoltSink = 0.35f;
+	constexpr float MoltAfterglowSeconds = 1.6f;
+	constexpr float MoltPulseHz = 1.2f;
+	constexpr float MoltPulseSize = 0.04f;
+	// How fast the crab swells to its new size after a molt, per second.
+	constexpr float GrowthEase = 2.5f;
 
 	const FLinearColor ShellColor = FLinearColor(0.75f, 0.16f, 0.06f);
 	const FLinearColor ClawColor = FLinearColor(0.9f, 0.28f, 0.08f);
@@ -266,6 +283,11 @@ void ACrabPawn::BeginPlay()
 	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_READY"));
 }
 
+float ACrabPawn::VisualBase() const
+{
+	return VisualBaseZ + ModelFeetOffset * (DisplayScale - 1.f);
+}
+
 ACrabBeach* ACrabPawn::GetBeach() const
 {
 	if (ACrabBeach* Cached = BeachCache.Get())
@@ -327,8 +349,8 @@ const TCHAR* ACrabPawn::AnimName(ECrabAnim State)
 
 void ACrabPawn::SetMoveTarget(const FVector& WorldPoint, int32 EnterBurrowIndex, int32 FeedPatchIndex)
 {
-	// A crab in its burrow stays put until it is told to come out (ExitBurrow).
-	if (IsInBurrow())
+	// A crab in its burrow stays put until it is told to come out (ExitBurrow). A won round ignores every order.
+	if (IsInBurrow() || bRoundOver)
 	{
 		return;
 	}
@@ -357,7 +379,7 @@ void ACrabPawn::ClearMoveTarget()
 
 bool ACrabPawn::TryDash(const FVector& TowardWorldPoint)
 {
-	if (IsDashing() || DashCooldownRemaining > 0.f)
+	if (IsDashing() || DashCooldownRemaining > 0.f || bRoundOver)
 	{
 		return false;
 	}
@@ -396,7 +418,7 @@ bool ACrabPawn::StartDance()
 	{
 		return true;
 	}
-	if (IsInBurrow() || IsDashing() || WaterDepth > CrabSurvival::SurgeDepth)
+	if (IsInBurrow() || IsDashing() || bRoundOver || WaterDepth > CrabSurvival::SurgeDepth)
 	{
 		return false;
 	}
@@ -469,6 +491,7 @@ void ACrabPawn::ExitBurrow()
 	{
 		return;
 	}
+	CancelMolt(TEXT("left"));
 	CurrentBurrow = INDEX_NONE;
 	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
 	LogEvent(TEXT("burrow_exit"));
@@ -476,11 +499,12 @@ void ACrabPawn::ExitBurrow()
 
 void ACrabPawn::UpdateBurrowSink(float DeltaSeconds)
 {
-	const float Goal = IsInBurrow() ? 1.f : 0.f;
+	// A molting crab, and one that has just molted, stays half out where it can be seen.
+	const float Goal = IsInBurrow() ? ((bMolting || MoltAfterglow > 0.f) ? MoltSink : 1.f) : 0.f;
 	BurrowSink = FMath::FInterpConstantTo(BurrowSink, Goal, DeltaSeconds, SinkSpeed);
 
 	const FVector Offset(0.f, 0.f, -BurrowSink * BurrowSinkDistance);
-	Visual->SetRelativeLocation(FVector(0.f, 0.f, VisualBaseZ) + Offset);
+	Visual->SetRelativeLocation(FVector(0.f, 0.f, VisualBase()) + Offset);
 	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -CapsuleHalfHeight) + Offset);
 
 	// Once fully under, nothing shows through the sand, so stop drawing it.
@@ -517,7 +541,7 @@ bool ACrabPawn::StartFeeding(int32 PatchIndex)
 	{
 		return true;
 	}
-	if (IsInBurrow() || IsDashing() || bDancing || bDigging || WaterDepth > CrabSurvival::SurgeDepth)
+	if (IsInBurrow() || IsDashing() || bDancing || bDigging || bRoundOver || WaterDepth > CrabSurvival::SurgeDepth)
 	{
 		return false;
 	}
@@ -590,6 +614,10 @@ bool ACrabPawn::StartDig()
 	{
 		return true;
 	}
+	if (bRoundOver)
+	{
+		return false;
+	}
 	const CrabDig::EResult Result = CheckDig();
 	if (Result != CrabDig::EResult::Ok)
 	{
@@ -630,6 +658,7 @@ void ACrabPawn::FinishDig()
 	}
 	bDigging = false;
 	DigElapsed = 0.f;
+	++RoundDug;
 	Food = FMath::Max(Food - CrabDig::FoodCost, 0.f);
 	SetMessage(TEXT("Burrow dug"));
 	LogEvent(TEXT("dig_done"), FString::Printf(TEXT("burrow=%d dug=%d food=%.3f"), Index, Beach->GetDugBurrowCount(), Food));
@@ -637,6 +666,11 @@ void ACrabPawn::FinishDig()
 
 void ACrabPawn::UpdateForaging(float DeltaSeconds)
 {
+	// The results panel holds everything still, hunger too.
+	if (bRoundOver)
+	{
+		return;
+	}
 	Food = CrabFood::FoodAfterDrain(Food, DeltaSeconds);
 
 	ACrabBeach* Beach = GetBeach();
@@ -659,6 +693,7 @@ void ACrabPawn::UpdateForaging(float DeltaSeconds)
 			const float Moved = Beach->TakeFood(FeedingPatch, CrabFood::FeedTransfer(Patch->Richness, Food, DeltaSeconds));
 			Food = FMath::Min(Food + Moved, 1.f);
 			FeedGained += Moved;
+			RoundFoodEaten += Moved;
 			if (CrabFood::IsEmpty(Patch->Richness))
 			{
 				EndFeeding(TEXT("Patch empty"));
@@ -688,7 +723,212 @@ void ACrabPawn::UpdateForaging(float DeltaSeconds)
 	}
 }
 
+// --- Molting -------------------------------------------------------------------------------
+
+CrabMolt::EResult ACrabPawn::CheckMolt() const
+{
+	CrabMolt::FState State;
+	State.Food = Food;
+	State.bInBurrow = IsInBurrow();
+	State.bInProgress = bMolting;
+	State.bRoundOver = bRoundOver;
+	return CrabMolt::Evaluate(State);
+}
+
+bool ACrabPawn::StartMolt()
+{
+	if (bMolting)
+	{
+		return true;
+	}
+	const CrabMolt::EResult Result = CheckMolt();
+	if (Result != CrabMolt::EResult::Ok)
+	{
+		const FString Reason = CrabMolt::ReasonText(Result);
+		if (!Reason.IsEmpty())
+		{
+			SetMessage(Reason);
+			LogEvent(TEXT("molt_refused"), FString::Printf(TEXT("reason=%s"), *Reason));
+		}
+		return false;
+	}
+
+	bMolting = true;
+	MoltElapsed = 0.f;
+	SetMessage(TEXT("Molting: stay in the burrow"), 3.f);
+	LogEvent(TEXT("molt_begin"), FString::Printf(TEXT("burrow=%d food=%.3f"), CurrentBurrow, Food));
+	return true;
+}
+
+void ACrabPawn::CancelMolt(const TCHAR* Reason)
+{
+	if (!bMolting)
+	{
+		return;
+	}
+	bMolting = false;
+	MoltElapsed = 0.f;
+	SetMessage(TEXT("Molt cancelled"));
+	LogEvent(TEXT("molt_cancel"), FString::Printf(TEXT("reason=%s"), Reason));
+}
+
+void ACrabPawn::FinishMolt()
+{
+	bMolting = false;
+	MoltElapsed = 0.f;
+	Food = CrabMolt::FoodAfterMolt(Food);
+	++Molts;
+	Grip = CrabMolt::ClampGrip(1.f, IsSoft());
+	MoltAfterglow = MoltAfterglowSeconds;
+	SetMessage(FString::Printf(TEXT("Molted (%d of %d)"), Molts, CrabMolt::Tuning::MoltsToWin), 3.f);
+	LogEvent(TEXT("molt_done"), FString::Printf(TEXT("molts=%d scale=%.3f food=%.3f"), Molts, GetGrowthScale(), Food));
+	if (CrabMolt::IsWon(Molts))
+	{
+		WinRound();
+	}
+}
+
+void ACrabPawn::BeginSoft()
+{
+	const bool bWasSoft = IsSoft();
+	SoftRemaining = CrabMolt::Tuning::SoftDuration;
+	Grip = CrabMolt::ClampGrip(Grip, true);
+	if (!bWasSoft)
+	{
+		LogEvent(TEXT("soft_begin"), FString::Printf(TEXT("seconds=%.0f"), SoftRemaining));
+	}
+}
+
+void ACrabPawn::UpdateMolting(float DeltaSeconds)
+{
+	if (SoftRemaining > 0.f)
+	{
+		SoftRemaining = CrabMolt::SoftAfter(SoftRemaining, DeltaSeconds);
+		if (SoftRemaining <= 0.f)
+		{
+			LogEvent(TEXT("soft_end"));
+		}
+	}
+	MoltAfterglow = FMath::Max(0.f, MoltAfterglow - DeltaSeconds);
+
+	if (!bMolting)
+	{
+		return;
+	}
+	if (!IsInBurrow())
+	{
+		CancelMolt(TEXT("left"));
+		return;
+	}
+	MoltElapsed += DeltaSeconds;
+	if (MoltElapsed >= CrabMolt::Tuning::Duration)
+	{
+		FinishMolt();
+	}
+}
+
+void ACrabPawn::UpdateGrowth(float DeltaSeconds)
+{
+	// A molt swells the crab over a second or so instead of popping it bigger, and a molting crab pulses.
+	ShownGrowth = FMath::FInterpTo(ShownGrowth, GetGrowthScale(), DeltaSeconds, GrowthEase);
+	MoltBlend = FMath::FInterpTo(MoltBlend, bMolting ? 1.f : 0.f, DeltaSeconds, 5.f);
+	if (bMolting)
+	{
+		MoltClock += DeltaSeconds;
+	}
+	DisplayScale = ShownGrowth * (1.f + MoltPulseSize * FMath::Sin(2.f * PI * MoltPulseHz * MoltClock) * MoltBlend);
+
+	// The look only: the capsule, so speed, reach and click radii, stays as it was.
+	Visual->SetRelativeScale3D(FVector(DisplayScale));
+	GetMesh()->SetRelativeScale3D(FVector(DisplayScale));
+}
+
+// --- The round -------------------------------------------------------------------------------
+
+void ACrabPawn::WinRound()
+{
+	bRoundOver = true;
+	bNewBest = BestSeconds <= 0.f || RoundSeconds < BestSeconds;
+	BestSeconds = CrabMolt::BestAfter(BestSeconds, RoundSeconds);
+	StopDance();
+	StopFeeding();
+	CancelDig(TEXT("round over"));
+	ClearMoveTarget();
+	DashTimeRemaining = 0.f;
+	if (ACrabBeach* Beach = GetBeach())
+	{
+		Beach->SetTideFrozen(true);
+	}
+	LogEvent(TEXT("round_won"), FString::Printf(TEXT("time=%.1f molts=%d dug=%d eaten=%.3f best=%.1f"),
+		RoundSeconds, Molts, RoundDug, RoundFoodEaten, BestSeconds));
+}
+
+void ACrabPawn::StartNewRound()
+{
+	ACrabBeach* Beach = GetBeach();
+	CancelMolt(TEXT("new round"));
+	ExitBurrow();
+	StopDance();
+	StopFeeding();
+	CancelDig(TEXT("new round"));
+	ClearMoveTarget();
+	DashTimeRemaining = 0.f;
+	DashCooldownRemaining = 0.f;
+
+	bRoundOver = false;
+	bNewBest = false;
+	RoundSeconds = 0.f;
+	RoundDug = 0;
+	RoundFoodEaten = 0.f;
+	Molts = 0;
+	SweptCount = 0;
+	SurgeCount = 0;
+	bWasInSurge = false;
+	SoftRemaining = 0.f;
+	MoltAfterglow = 0.f;
+	MoltBlend = 0.f;
+	ShownGrowth = 1.f;
+	DisplayScale = 1.f;
+	Food = CrabFood::StartFood;
+	Grip = 1.f;
+	WaterDepth = 0.f;
+	BurrowSink = 0.f;
+
+	if (Beach)
+	{
+		Beach->ResetForNewRound();
+	}
+	const float Half = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+	const float Ground = Beach ? Beach->GetGroundHeight(RoundStartXY.X, RoundStartXY.Y) : GetActorLocation().Z - Half;
+	SetActorLocation(FVector(RoundStartXY.X, RoundStartXY.Y, Ground + Half + 5.f), false, nullptr, ETeleportType::TeleportPhysics);
+	SetActorRotation(FRotator::ZeroRotator);
+	GetCharacterMovement()->StopMovementImmediately();
+
+	SetMessage(TEXT("New round"));
+	LogEvent(TEXT("round_new"));
+}
+
+void ACrabPawn::ApplyTestFood()
+{
+	const float Start = CVarStartFood.GetValueOnGameThread();
+	if (Start >= 0.f && Start != AppliedStartFood)
+	{
+		AppliedStartFood = Start;
+		SetFood(Start);
+	}
+	const float Floor = CVarFoodFloor.GetValueOnGameThread();
+	if (Floor >= 0.f && !bRoundOver)
+	{
+		SetFood(FMath::Max(Food, Floor));
+	}
+}
+
 // --- Survival ---------------------------------------------------------------------
+
+void ACrabPawn::SetGrip(float NewGrip)
+{
+	Grip = CrabMolt::ClampGrip(NewGrip, IsSoft());
+}
 
 void ACrabPawn::SweepOut()
 {
@@ -735,9 +975,16 @@ void ACrabPawn::UpdateSurvival(float DeltaSeconds)
 		WaterDepth = 0.f;
 		if (Beach->IsBurrowFlooded(CurrentBurrow))
 		{
+			// A flood that catches the crab mid-molt leaves it soft.
+			const bool bMidMolt = bMolting;
+			CancelMolt(TEXT("flood"));
 			ExitBurrow();
-			SetMessage(TEXT("Flooded out!"), 3.f);
+			SetMessage(bMidMolt ? TEXT("Flooded out mid-molt! Soft for a while") : TEXT("Flooded out!"), 3.f);
 			LogEvent(TEXT("flooded_out"));
+			if (bMidMolt)
+			{
+				BeginSoft();
+			}
 		}
 	}
 	else
@@ -763,7 +1010,7 @@ void ACrabPawn::UpdateSurvival(float DeltaSeconds)
 
 	const float Drain = CrabSurvival::GripDrainPerSecond(WaterDepth);
 	const float Regen = CrabSurvival::GripRegenPerSecond(WaterDepth, IsInBurrow());
-	Grip = FMath::Clamp(Grip + (Regen - Drain) * DeltaSeconds, 0.f, 1.f);
+	Grip = FMath::Clamp(Grip + (Regen - Drain) * DeltaSeconds, 0.f, CrabMolt::GripCap(IsSoft()));
 
 	if (bInSurge)
 	{
@@ -918,7 +1165,7 @@ void ACrabPawn::UpdateProceduralDance(float DeltaSeconds)
 	const float Beat = DanceClock * 2.f;
 	const float Bounce = FMath::Abs(FMath::Sin(PI * Beat)) * 9.f * DanceBlend;
 	const float Rock = FMath::Sin(PI * Beat) * 9.f * DanceBlend;
-	Visual->SetRelativeLocation(FVector(0.f, 0.f, VisualBaseZ + Bounce));
+	Visual->SetRelativeLocation(FVector(0.f, 0.f, VisualBase() + Bounce));
 	Visual->SetRelativeRotation(FRotator(0.f, 0.f, Rock));
 	for (int32 Index = 0; Index < ClawParts.Num() && Index < ClawBaseLocations.Num(); ++Index)
 	{
@@ -984,7 +1231,14 @@ void ACrabPawn::Tick(float DeltaSeconds)
 		CameraBoom->SetRelativeRotation(FRotator(CameraPitch, 0.f, 0.f));
 	}
 
+	if (!bRoundOver)
+	{
+		RoundSeconds += DeltaSeconds;
+	}
+	ApplyTestFood();
 	UpdateSurvival(DeltaSeconds);
+	UpdateMolting(DeltaSeconds);
+	UpdateGrowth(DeltaSeconds);
 	UpdateBurrowSink(DeltaSeconds);
 	UpdateWalking(DeltaSeconds);
 	UpdateForaging(DeltaSeconds);
@@ -1008,10 +1262,11 @@ void ACrabPawn::LogState() const
 	const FString Target = bHasTarget ? FString::Printf(TEXT("%.1f,%.1f"), MoveTarget.X, MoveTarget.Y) : FString(TEXT("none"));
 	const ACrabBeach* Beach = GetBeach();
 	// The live test parses everything up to dash=. New fields go after it.
-	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d"),
+	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d molts=%d molt=%.2f soft=%.1f over=%d scale=%.3f"),
 		GetWorld()->GetTimeSeconds(), Location.X, Location.Y, Location.Z,
 		FRotator::NormalizeAxis(GetActorRotation().Yaw), GetCharacterMovement()->Velocity.Size2D(), *Target, IsDashing() ? 1 : 0,
 		Grip, WaterDepth, Beach ? Beach->GetSurfaceLevel() : 0.f, Beach ? Beach->GetTideFraction() : 0.f,
 		CurrentBurrow, bDancing ? 1 : 0, AnimName(AnimState), bUseSkeletalMesh ? 1 : 0, SweptCount,
-		Food, FeedingPatch, GetDigProgress(), Beach ? Beach->GetDugBurrowCount() : 0);
+		Food, FeedingPatch, GetDigProgress(), Beach ? Beach->GetDugBurrowCount() : 0,
+		Molts, GetMoltProgress(), SoftRemaining, bRoundOver ? 1 : 0, ShownGrowth);
 }
