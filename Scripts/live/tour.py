@@ -7,12 +7,14 @@ a person to watch: real speed, and the pointer glides between targets on
 eased curves with small pauses instead of jumping. Nothing here is a test. The
 checks it prints only say whether each beat happened.
 
-The tour, in order: the beach at low tide; scuttle (hold left, steer the
-cursor round the crab); dance (click the crab, click it again); dash (right
-click, twice); burrow (click it, the crab walks in and digs in, click
-elsewhere to come out); then the crab waves at the incoming tide until the
-surge stops the dance, the surge takes its grip and the sea sweeps it out to
-the dunes.
+The tour, in order: the beach at low tide; forage (click a food patch, the
+crab walks there and feeds, the food bar fills and the patch dulls); dig (click
+away, click the HUD's dig button, four seconds of standing still, a new hole);
+that burrow (walk off it, click it, the crab digs in, click elsewhere to come
+out); scuttle (hold left, steer the cursor round the crab); dance (click the
+crab, click it again); dash (right click); then the crab waves at the incoming
+tide until the surge stops the dance, the surge takes its grip and the sea
+sweeps it out to the dunes.
 
 Usage: tour.py <game log> <output dir> [game pid] [--sync]
   --sync   work with record.sh: once the game is ready and the window is
@@ -41,19 +43,24 @@ import time
 
 from focus import pointer_position, warp_pointer_to_screen, window_bounds
 from kbm import BTN_LEFT, BTN_RIGHT
-from session import Abort, Run, CLICK_HOLD, SETTLE, in_view
+from session import Abort, Run, CLICK_HOLD, SETTLE, event_detail, in_view
 
 # ---- pacing (seconds) ----
-# The tide clock starts with the game, about 6 s before the video, and burrow2 floods
-# about 43 s into the video at TideSpeed 1, so everything up to the burrow is kept brisk.
+# The tide clock starts with the game, about 6 s before the video, and record.sh runs it at
+# 0.75 speed. The low flats where the tour forages and digs are wet about 50 s into the video
+# at that speed, so the forage, dig and burrow beats come first and the older beats are kept short.
 GO_TIMEOUT = 60.0          # how long to wait for record.sh to start the video
-INTRO = 1.4                # the beach and the crab, before anything moves
+INTRO = 1.0                # the beach and the crab, before anything moves
 GLIDE_HZ = 60.0            # pointer updates per second while gliding
-SCUTTLE_LEAD = 1.2         # cursor travels to the left of the crab
-SCUTTLE_STEER = 3.8        # cursor sweeps round the crab with the button held
-SCUTTLE_SETTLE = 1.0      # after release the crab stops
-DASH_GAP = 1.3             # between the two dashes (the cooldown is 1.2 s)
-BURROW_DWELL = 3.0         # dug in, before the click that brings the crab out
+FEED_SECONDS = 6.5         # the crab feeds this long, so the food bar visibly fills and the patch dulls
+PATCH_INDEX = 3            # the food patch near the start, in view from the first frame
+PATCH_MARGIN = 90          # a patch this close to the viewport edge is walked toward first
+AWAY_PX = (-380, 40)       # from the crab, leaving the patch for open sand: screen left is -Y
+NEW_HOLE_STEP_PX = (-260, 20)  # from the crab, walking off the new hole so it shows before it is entered: left, away from the patch
+SCUTTLE_LEAD = 0.9         # cursor travels to the left of the crab
+SCUTTLE_STEER = 3.0        # cursor sweeps round the crab with the button held
+SCUTTLE_SETTLE = 0.8      # after release the crab stops
+BURROW_DWELL = 2.2         # dug in, before the click that brings the crab out
 MOVE_PAUSE = 0.4           # the cursor rests on a target this long before the click
 HOLD = float(os.environ.get("TOUR_HOLD") or 3.5)
 TIDE_CAP = float(os.environ.get("TOUR_TIDE_CAP") or 90.0)
@@ -63,8 +70,6 @@ TIDE_CAP = float(os.environ.get("TOUR_TIDE_CAP") or 90.0)
 # rest point right of it. The crab walks toward the cursor's ground point, so it ends up there.
 SCUTTLE_PATH = [(-200, 20), (-20, -110), (210, -30), (240, 30)]
 DASH_OFFSET = 330          # px left, then right, of the crab
-BURROW_INDEX = 2
-BURROW_MARGIN = 90         # a burrow this close to the viewport edge is walked toward first
 EXIT_CLICK = (0, 300)       # from the middle of the view: straight down the screen, up the beach and away from the sea and the creek
 REST_SPOT = (300, 200)     # where the cursor waits for the tide, from the crab
 
@@ -191,6 +196,7 @@ class Tour(Run):
 
     def beat_scuttle(self):
         self.beat("scuttle: hold left, the crab follows the cursor")
+        self.wait_idle(4.0)
         (cx, cy), _ = self.crab_pixel()
         path = [(cx + dx, cy + dy) for dx, dy in SCUTTLE_PATH]
         self.glide_to(path[0], SCUTTLE_LEAD)
@@ -206,41 +212,38 @@ class Tour(Run):
     def beat_dance(self):
         self.beat("dance: click the crab")
         (cx, cy), screen = self.crab_pixel()
-        self.glide_to((cx, cy), 1.2)
+        self.glide_to((cx, cy), 1.0)
         self.pause(MOVE_PAUSE)
         mark = self.click_left()
         self.expect_event(mark, "dance_start", 1.5, "click on the crab: dance_start event")
         # The cursor steps aside while the crab dances, then comes back to stop it.
-        self.pause(0.8)
-        self.glide_to((cx + 230, cy + 110), 1.2)
-        self.pause(1.0)
+        self.pause(0.6)
+        self.glide_to((cx + 230, cy + 110), 1.0)
+        self.pause(0.6)
         self.beat("dance: click again to stop")
         (cx, cy), screen = self.crab_pixel()
-        self.glide_to((cx, cy), 1.2)
+        self.glide_to((cx, cy), 1.0)
         self.pause(MOVE_PAUSE)
         mark = self.click_left()
         self.expect_event(mark, "dance_stop", 1.5, "second click on the crab: dance_stop event")
-        self.pause(0.8)
+        self.pause(0.6)
 
     def beat_dash(self):
         self.beat("dash: right click")
         (cx, cy), _ = self.crab_pixel()
-        self.glide_to((cx - DASH_OFFSET, cy - 20), 1.2)
+        self.glide_to((cx - DASH_OFFSET, cy - 20), 1.0)
         self.pause(MOVE_PAUSE)
         self.mouse.click(BTN_RIGHT)
-        self.pause(DASH_GAP)
-        self.glide([(cx, cy - 130), (cx + DASH_OFFSET, cy - 20)], 1.3)
-        self.pause(0.2)
-        self.mouse.click(BTN_RIGHT)
-        self.pause(0.8)
+        self.pause(1.2)
 
-    def visible_burrow(self, index):
-        """The burrow's viewport pixel once it is comfortably in view, walking toward it if it is not."""
+    def visible_spot(self, kind, index):
+        """The viewport pixel of a burrow or food patch (kind is "burrows" or "patches") once it is comfortably in
+        view, walking toward it if it is not."""
         for _ in range(4):
             self.wait_idle(4.0)
             screen = self.fresh_screen()
-            pixel = screen.burrows.get(index) if screen else None
-            if pixel and in_view(pixel, screen.view, BURROW_MARGIN):
+            pixel = getattr(screen, kind).get(index) if screen else None
+            if pixel and in_view(pixel, screen.view, PATCH_MARGIN):
                 return pixel, screen
             if not pixel or pixel == (-1.0, -1.0):
                 return None, screen
@@ -249,23 +252,78 @@ class Tour(Run):
             w, h = screen.view
             dx, dy = pixel[0] - cx, pixel[1] - cy
             k = min(1.0, 0.75 * min((w / 2 - 120) / max(abs(dx), 1.0), (h / 2 - 90) / max(abs(dy), 1.0)))
-            self.beat("walk toward burrow%d, it is not in view yet" % index)
+            self.beat("walk toward %s%d, it is not in view yet" % ({"burrows": "burrow", "patches": "patch"}[kind], index))
             self.glide_to((cx + dx * k, cy + dy * k), 1.4)
             self.pause(MOVE_PAUSE)
             self.click_left()
             self.pause(1.0)
         return None, None
 
-    def beat_burrow(self):
-        self.beat("burrow: click it, the crab walks in and digs in")
-        pixel, screen = self.visible_burrow(BURROW_INDEX)
+    def beat_forage(self):
+        self.beat("forage: click a food patch, the crab walks there and feeds")
+        pixel, screen = self.visible_spot("patches", PATCH_INDEX)
         if pixel is None:
-            self.check(False, "burrow%d is in view to click" % BURROW_INDEX)
+            self.check(False, "patch%d is in view to click" % PATCH_INDEX)
             return False
-        self.glide_to(pixel, 1.6)
+        self.glide_to(pixel, 1.4)
         self.pause(MOVE_PAUSE)
         mark = self.click_left()
-        enter = self.expect_event(mark, "burrow_enter", 12.0, "click on burrow%d: burrow_enter event" % BURROW_INDEX)
+        begin = self.expect_event(mark, "food_begin", 12.0, "click on patch%d: food_begin event" % PATCH_INDEX)
+        if begin is None:
+            return False
+        self.beat("feeding: the food bar fills as the patch is sifted")
+        # The cursor rests beside the patch, out of the crab's way, while it feeds.
+        self.glide_to((pixel[0] + 150, pixel[1] - 90), 1.0)
+        self.pause(FEED_SECONDS - 1.0)
+        return True
+
+    def beat_dig(self):
+        """Leave the patch for open sand, click the dig button and wait for the hole. Returns the new burrow's index."""
+        self.beat("click away: the crab stops feeding and walks to open sand")
+        (cx, cy), _ = self.crab_pixel()
+        self.glide_to((cx + AWAY_PX[0], cy + AWAY_PX[1]), 1.2)
+        self.pause(MOVE_PAUSE)
+        mark = self.click_left()
+        self.expect_event(mark, "food_end", 2.0, "click away: food_end event")
+        self.pause(0.8)
+        self.wait_idle(6.0)
+        self.pause(0.4)
+
+        self.beat("dig: click the dig button, four seconds of standing still")
+        screen = self.fresh_screen()
+        if screen is None or screen.dig is None:
+            self.check(False, "a CRABSIM_SCREEN line with the dig button arrived")
+            return None
+        self.glide_to(screen.dig, 1.4)
+        self.pause(MOVE_PAUSE)
+        mark = self.click_left()
+        self.expect_event(mark, "dig_begin", 1.5, "click on the dig button: dig_begin event")
+        done = self.expect_event(mark, "dig_done", 8.0, "dig_done event")
+        if done is None:
+            return None
+        self.beat("a new burrow")
+        self.pause(0.8)
+        hole = event_detail(done, "burrow")
+        return 4 if hole is None else int(hole)
+
+    def beat_new_burrow(self, hole):
+        self.beat("walk off the new hole so it shows")
+        (cx, cy), _ = self.crab_pixel()
+        self.glide_to((cx + NEW_HOLE_STEP_PX[0], cy + NEW_HOLE_STEP_PX[1]), 1.1)
+        self.pause(MOVE_PAUSE)
+        self.click_left()
+        self.pause(0.8)
+        self.wait_idle(4.0)
+
+        self.beat("burrow: click the new hole, the crab walks in and digs in")
+        pixel, screen = self.visible_spot("burrows", hole)
+        if pixel is None:
+            self.check(False, "burrow%d is in view to click" % hole)
+            return False
+        self.glide_to(pixel, 1.4)
+        self.pause(MOVE_PAUSE)
+        mark = self.click_left()
+        enter = self.expect_event(mark, "burrow_enter", 12.0, "click on the new burrow%d: burrow_enter event" % hole)
         if enter is None:
             return False
         self.beat("dug in")
@@ -355,10 +413,13 @@ class Tour(Run):
             self.place_abs(self.bounds[0] + 1010, self.bounds[1] + 610)
         self.sync_with_recorder()
         self.beat_intro()
+        if self.beat_forage():
+            hole = self.beat_dig()
+            if hole is not None:
+                self.beat_new_burrow(hole)
         self.beat_scuttle()
         self.beat_dance()
         self.beat_dash()
-        self.beat_burrow()
         self.beat_tide()
         self.finish()
 

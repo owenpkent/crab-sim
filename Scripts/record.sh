@@ -10,21 +10,23 @@
 #   SPEEDUP=2 Scripts/record.sh videos/fast.mp4       the tour at 2x, after the capture
 #   RECORD_TIDE_SPEED=1.5 Scripts/record.sh           a faster tide (see below)
 #
-# The tour, in order: the beach at low tide; scuttle (hold left, the crab follows
-# the cursor round a loop); dance (click the crab, click it again); dash (right
-# click, twice); burrow (click it, the crab walks in and digs in, click elsewhere
-# to come out); then the crab waves at the incoming tide, the surge takes its
+# The tour, in order: the beach at low tide; forage (click a food patch, the crab
+# walks there and feeds, the food bar fills); dig (click away, click the HUD's dig
+# button, four seconds of standing still, a new hole); that burrow (walk off it,
+# click it, the crab digs in, click elsewhere to come out); scuttle (hold left, the
+# crab follows the cursor round a loop); dance (click the crab, click it again);
+# dash (right click); then the crab waves at the incoming tide, the surge takes its
 # grip and the sea sweeps it out to the dunes, and a few seconds of hold. About
-# 70 s at real speed. The pointer glides between targets so a viewer can follow it.
+# 105 s at real speed. The pointer glides between targets so a viewer can follow it.
 # Next to OUT.mp4 goes OUT.events.txt: what the tour did and what the game
 # logged, each with its time in the video (video=SECONDS, good to about half a
 # second, and divided by SPEEDUP).
 #
 # The game runs with CrabSim.StateLog 1 (the tour reads its log; it draws
 # nothing) and CrabSim.TideSpeed set by RECORD_TIDE_SPEED. The tide clock starts
-# with the game, so the burrow beat has to finish before the water floods the
-# burrow: at speed 1 that is about 43 s into the clip, and faster tides leave
-# less time. Full HUD (tide gauge, grip bar, hints) stays on.
+# with the game, so the forage, dig and burrow beats have to finish before the water
+# reaches the flats where they happen: at the default speed 0.75 that is about 50 s into the
+# clip, and faster tides leave less time. Full HUD (tide gauge, grip bar, hints) stays on.
 #
 # Needs: an X11 session, write access to /dev/uinput, xwininfo, xprop, and ffmpeg
 # with x11grab and libx264. Opens a game window and drives the real pointer, so
@@ -32,7 +34,7 @@
 # Do not let another window cover the game: the capture is of the screen.
 #
 # Environment overrides:
-#   RECORD_TIDE_SPEED=<n>  CrabSim.TideSpeed (default 1: a whole tide takes 180 s)
+#   RECORD_TIDE_SPEED=<n>  CrabSim.TideSpeed (default 0.75: a whole tide takes 240 s)
 #   LIMIT=<s>              stop recording after this many seconds (default 240)
 #   FPS=30  CRF=23         capture frame rate and x264 quality (lower is better)
 #   SPEEDUP=1              play the video this many times faster, after the capture
@@ -69,7 +71,7 @@ case "${1:-}" in -h|--help) awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} N
 OUT="${1:-$ROOT/videos/crab-sim-tour.mp4}"
 RESX="${RECORD_RESX:-1280}"
 RESY="${RECORD_RESY:-720}"
-TIDE_SPEED="${RECORD_TIDE_SPEED:-1}"
+TIDE_SPEED="${RECORD_TIDE_SPEED:-0.75}"
 LIMIT="${LIMIT:-240}"
 FPS="${FPS:-30}"
 CRF="${CRF:-23}"

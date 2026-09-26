@@ -126,6 +126,23 @@ primitive shapes and flat colours.
 - Level `/Game/Maps/Beach`: lighting only (sun, sky, fog, post process). The
   game spawns terrain and water itself.
 
+## Stand-ins the game draws until art exists
+
+Built by `Source/CrabSim/CrabBeach.cpp` and `CrabPawn.cpp` from engine basic shapes and `BasicShapeMaterial` (a
+`Color` parameter each). No assets to fetch or generate. Replace them by dropping meshes in and loading them where
+the shapes are built.
+
+- **Food patch** (seven, `BuildFoodPatches`): nine flat cylinder mats (50 to 110 cm across, 1.5 cm thick, tilted to
+  the ground) scattered inside a 130 cm radius, plus eight small flattened spheres (pellets) on top. Mat colour goes
+  from dull brown (bare) to deep green (rich) with the patch's richness, and pellets vanish as it is eaten. A real
+  patch would be one mesh about 2.6 m across with a mask or a colour ramp for richness, and it needs no collision.
+- **Dug burrow** (up to three, `AddBurrowVisual`): the same dark disc and ring of ten sand lumps as the four authored
+  burrows, 1.5 m across, 3 m with the rim.
+- **Feeding and digging pose** (`UpdateWorkPose`): no clips exist. The shape crab dips and its small claw scoops to
+  its mouth twice a second while feeding, and shudders while digging. The skeletal crab only nods and shudders as a
+  whole. Clips wanted later, same contract as above, 30 fps, in place: `Feed` (minor claw scoops mud to the
+  mouth, maxillipeds flutter, 0.4 s loop) and `Dig` (legs shovel sand backward, body settles, 1.0 s loop).
+
 ## Provenance and licences
 
 Every third-party asset is recorded in `Art/assets/<author>.md`: name, source
@@ -148,6 +165,7 @@ clear licence goes in.
   game camera, leg bands look toy-like up close, claw relief is subtle at game distance. No LODs.
 - Unreal content and level: **done.** `Scripts/import-art.sh` then `Scripts/build-level.sh`
   (`Art/unreal/README.md`). Water, terrain, crab shell materials, the tide parameter collection and the Beach level.
+- Food patches and dug burrows: **stand-ins** from engine shapes, see above. No art needed to play.
 - Environment assets (sand textures, rocks, shells, driftwood, plants): **not fetched.** The sandbox denied
   network access to `api.polyhaven.com` and `dl.polyhaven.org`, and it was not worked around. To unblock,
   allow Bash `curl` (or WebFetch) for those two hosts and re-run the environment task: pick assets from the
