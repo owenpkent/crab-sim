@@ -84,6 +84,8 @@ public:
 	float GetGrip() const { return Grip; }
 	float GetWaterDepth() const { return WaterDepth; }
 	int32 GetSweptCount() const { return SweptCount; }
+	/** How many separate times the surge has taken hold of the crab. */
+	int32 GetSurgeCount() const { return SurgeCount; }
 
 	/** The beach the crab lives on, found on first use. Null if there is none. */
 	ACrabBeach* GetBeach() const;
@@ -188,6 +190,7 @@ private:
 	int32 PendingBurrow = INDEX_NONE;
 	int32 CurrentBurrow = INDEX_NONE;
 	int32 SweptCount = 0;
+	int32 SurgeCount = 0;
 	float DashTimeRemaining = 0.f;
 	float DashCooldownRemaining = 0.f;
 	float StateLogTimer = 0.f;

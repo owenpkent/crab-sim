@@ -193,7 +193,7 @@ bool FCrabControllerHoldFollowsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerHoldDanceTest, "CrabSim.Controller.HoldingOnTheCrabKeepsTheDanceDraggingAwayEndsIt", TestFlags)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerHoldDanceTest, "CrabSim.Controller.HoldingOnTheCrabKeepsTheDanceAndALaterHoldAwayEndsIt", TestFlags)
 bool FCrabControllerHoldDanceTest::RunTest(const FString& Parameters)
 {
 	FControllerRig Rig;
@@ -213,9 +213,10 @@ bool FCrabControllerHoldDanceTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("still dancing while the button is held on the crab"), Rig.Crab->IsDancing());
 	TestFalse(TEXT("no walking target"), Rig.Crab->HasMoveTarget());
 
-	// Drag away and it follows.
+	// The press that started the dance is over. A new press that starts away from the crab ends the dance and follows.
+	Rig.Controller->NotifyLeftButtonReleased();
 	Rig.Controller->HandleHold(*Rig.Crab, Rig.Ground(0.f, 500.f));
-	TestFalse(TEXT("dragging away ends the dance"), Rig.Crab->IsDancing());
+	TestFalse(TEXT("a later hold away from the crab ends the dance"), Rig.Crab->IsDancing());
 	TestTrue(TEXT("and starts walking"), Rig.Crab->HasMoveTarget());
 	return true;
 }
@@ -254,5 +255,54 @@ bool FCrabControllerHoldNearBurrowTest::RunTest(const FString& Parameters)
 		Rig.World.TickN(1, 1.f / 60.f);
 	}
 	TestTrue(TEXT("dug in while the button was held"), Rig.Crab->IsInBurrow());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerSwallowHoldTest, "CrabSim.Controller.ADanceClickSwallowsTheRestOfThePress", TestFlags)
+bool FCrabControllerSwallowHoldTest::RunTest(const FString& Parameters)
+{
+	FControllerRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()))
+	{
+		return false;
+	}
+
+	// Click to start dancing, hold, drift off the crab: the dance is not cancelled and the crab does not walk.
+	Rig.Controller->HandleClick(*Rig.Crab, Rig.Ground(10.f, 10.f));
+	TestTrue(TEXT("dancing"), Rig.Crab->IsDancing());
+	Rig.Controller->HandleHold(*Rig.Crab, Rig.Ground(0.f, 300.f));
+	TestTrue(TEXT("a hand that drifts during the press does not end the dance"), Rig.Crab->IsDancing());
+	TestFalse(TEXT("nor start a walk"), Rig.Crab->HasMoveTarget());
+
+	// Releasing the button ends the swallow, so the next hold works normally.
+	Rig.Controller->NotifyLeftButtonReleased();
+	Rig.Controller->HandleHold(*Rig.Crab, Rig.Ground(0.f, 300.f));
+	TestFalse(TEXT("the next press can steer the crab off the dance"), Rig.Crab->IsDancing());
+	TestTrue(TEXT("and walk"), Rig.Crab->HasMoveTarget());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerStopDanceNoWalkTest, "CrabSim.Controller.StoppingTheDanceByClickDoesNotWalkTheCrab", TestFlags)
+bool FCrabControllerStopDanceNoWalkTest::RunTest(const FString& Parameters)
+{
+	FControllerRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()))
+	{
+		return false;
+	}
+	Rig.Crab->StartDance();
+	Rig.World.TickSeconds(0.3f);
+	const FVector Before = Rig.Crab->GetActorLocation();
+
+	Rig.Controller->HandleClick(*Rig.Crab, Rig.Ground(30.f, 20.f));
+	TestFalse(TEXT("the click stops the dance"), Rig.Crab->IsDancing());
+	// The button is still down for several frames: holding must not walk the crab to the click.
+	for (int32 Frame = 0; Frame < 30; ++Frame)
+	{
+		Rig.Controller->HandleHold(*Rig.Crab, Rig.Ground(30.f, 20.f));
+		Rig.World.TickN(1, 1.f / 60.f);
+	}
+	TestFalse(TEXT("no walking target"), Rig.Crab->HasMoveTarget());
+	TestTrue(TEXT("the crab has not moved"), FVector::Dist2D(Before, Rig.Crab->GetActorLocation()) < 6.f);
 	return true;
 }

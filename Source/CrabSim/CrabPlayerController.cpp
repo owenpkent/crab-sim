@@ -93,6 +93,7 @@ void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 		if (Burrow == INDEX_NONE && FVector::Dist2D(Point, Crab.GetActorLocation()) <= DanceClickRadius)
 		{
 			Crab.ToggleDance();
+			bSwallowHold = true;
 			return;
 		}
 	}
@@ -106,7 +107,7 @@ void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 
 void ACrabPlayerController::HandleHold(ACrabPawn& Crab, const FVector& Point)
 {
-	if (Crab.IsInBurrow())
+	if (Crab.IsInBurrow() || bSwallowHold)
 	{
 		return;
 	}
@@ -178,6 +179,11 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 		return;
 	}
 
+	if (WasInputKeyJustReleased(EKeys::LeftMouseButton) || !IsInputKeyDown(EKeys::LeftMouseButton))
+	{
+		NotifyLeftButtonReleased();
+	}
+
 	FVector Point;
 	const bool bHavePoint = GetCursorGroundPoint(Point);
 
@@ -185,6 +191,7 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 	{
 		if (WasInputKeyJustPressed(EKeys::LeftMouseButton))
 		{
+			bSwallowHold = false;
 			HandleClick(*Crab, Point);
 		}
 		else if (IsInputKeyDown(EKeys::LeftMouseButton))

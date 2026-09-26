@@ -687,6 +687,57 @@ bool FCrabPawnSurgeDirectionTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabPawnSurgeHysteresisTest, "CrabSim.Pawn.SwellAcrossTheSurgeLineIsOneEpisodeNotMany", TestFlags)
+bool FCrabPawnSurgeHysteresisTest::RunTest(const FString& Parameters)
+{
+	FRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()))
+	{
+		return false;
+	}
+	Settle(Rig.World);
+
+	// A tide that holds still with a quick swell riding on it: depth at the crab swings from about 39 to 51 cm,
+	// crossing the 45 cm surge line twice per swell, four swells in all. The surge shoves the crab a little up
+	// the beach, so the range is kept clear of the 35 cm point where the surge counts as over.
+	const FVector Where = Rig.Crab->GetActorLocation();
+	const float Mean = Rig.Beach->GetGroundHeight(Where.X, Where.Y) + CrabSurvival::SurgeDepth;
+	Rig.Beach->Tide.LowLevel = Mean;
+	Rig.Beach->Tide.HighLevel = Mean;
+	Rig.Beach->Tide.SwellHeight = 6.f;
+	Rig.Beach->Tide.SwellPeriod = 2.f;
+	Rig.Beach->SetTideClock(0.f);
+	Rig.World.TickSeconds(8.f);
+
+	TestTrue(TEXT("the surge did take hold"), Rig.Crab->GetSurgeCount() >= 1);
+	TestEqual(TEXT("as one episode, not one per wave"), Rig.Crab->GetSurgeCount(), 1);
+	TestEqual(TEXT("and it never swept the crab away"), Rig.Crab->GetSweptCount(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabPawnSurgeAgainTest, "CrabSim.Pawn.ASecondTideIsANewEpisode", TestFlags)
+bool FCrabPawnSurgeAgainTest::RunTest(const FString& Parameters)
+{
+	FRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()))
+	{
+		return false;
+	}
+	Settle(Rig.World);
+	Rig.Beach->SetTideClock(HighTide);
+	Rig.World.TickSeconds(1.f);
+	TestEqual(TEXT("first surge"), Rig.Crab->GetSurgeCount(), 1);
+
+	// Out of the water for a while, then back in.
+	const float DuneX = -3300.f;
+	Rig.Crab->SetActorLocation(FVector(DuneX, 0.f, Rig.Beach->GetGroundHeight(DuneX, 0.f) + 70.f), false, nullptr, ETeleportType::TeleportPhysics);
+	Rig.World.TickSeconds(1.f);
+	Rig.Crab->SetActorLocation(FVector(0.f, 0.f, Rig.Beach->GetGroundHeight(0.f, 0.f) + 70.f), false, nullptr, ETeleportType::TeleportPhysics);
+	Rig.World.TickSeconds(1.f);
+	TestEqual(TEXT("a fresh surge after drying off counts again"), Rig.Crab->GetSurgeCount(), 2);
+	return true;
+}
+
 // --- Feedback ----------------------------------------------------------------------------
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabPawnMessageFadesTest, "CrabSim.Pawn.MessagesFadeOut", TestFlags)

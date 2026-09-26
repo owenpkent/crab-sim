@@ -49,6 +49,8 @@ namespace
 	// The Scuttle clip is authored for about this ground speed, uu/s. Playback scales around it.
 	constexpr float ScuttleReferenceSpeed = 450.f;
 	constexpr float SinkSpeed = 2.2f;
+	// Depth the water must fall below the surge line before the surge is over, uu.
+	constexpr float SurgeHysteresis = 10.f;
 
 	const FLinearColor ShellColor = FLinearColor(0.75f, 0.16f, 0.06f);
 	const FLinearColor ClawColor = FLinearColor(0.9f, 0.28f, 0.08f);
@@ -507,13 +509,20 @@ void ACrabPawn::UpdateSurvival(float DeltaSeconds)
 	}
 
 	const bool bInSurge = WaterDepth > CrabSurvival::SurgeDepth;
+	// Hysteresis: the swell rides across the threshold, so the surge only counts as over once the
+	// water has clearly dropped away, not the moment it dips below the line.
 	if (bInSurge && !bWasInSurge)
 	{
+		++SurgeCount;
+		bWasInSurge = true;
 		// Advice, not news: it must not talk over "Flooded out!" or "Swept out!".
 		SetMessage(TEXT("The tide has you! Get to higher ground"), 3.f, /*bReplaceCurrent=*/false);
 		LogEvent(TEXT("surge_begin"));
 	}
-	bWasInSurge = bInSurge;
+	else if (bWasInSurge && WaterDepth < CrabSurvival::SurgeDepth - SurgeHysteresis)
+	{
+		bWasInSurge = false;
+	}
 
 	const float Drain = CrabSurvival::GripDrainPerSecond(WaterDepth);
 	const float Regen = CrabSurvival::GripRegenPerSecond(WaterDepth, IsInBurrow());

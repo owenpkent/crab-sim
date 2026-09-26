@@ -39,6 +39,12 @@ public:
 	/** What holding the left button with the cursor at the point does, each frame. */
 	void HandleHold(ACrabPawn& Crab, const FVector& Point);
 
+	/**
+	 * The left button came up. A click on the crab toggles its dance and then swallows the rest of
+	 * that press, so a long press or a wobbling hand does not turn into a walk. This ends the swallow.
+	 */
+	void NotifyLeftButtonReleased() { bSwallowHold = false; }
+
 	/** Farthest a click can send the crab from where it stands, uu. Keeps a click near the horizon sane. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|Input")
 	float MaxClickDistance = 3000.f;
@@ -56,6 +62,7 @@ private:
 	void LogScreenPositions(float DeltaTime);
 
 	float ScreenLogTimer = 0.f;
+	bool bSwallowHold = false;
 
 	void ResolveTarget(const ACrabPawn& Crab, const FVector& Point, FVector& OutTarget, int32& OutBurrow) const;
 };
