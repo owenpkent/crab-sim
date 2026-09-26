@@ -13,7 +13,9 @@ public class CrabSim : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
-			"EnhancedInput"
+			"EnhancedInput",
+			"Slate",
+			"SlateCore"
 		});
 
 		// Headers live flat in Source/CrabSim/; keep subdirectories (Tests/) able to include them.
