@@ -95,7 +95,7 @@ ACrabPawn::ACrabPawn()
 	CameraBoom->SetupAttachment(GetCapsuleComponent());
 	CameraBoom->SetUsingAbsoluteRotation(true);
 	CameraBoom->SetRelativeRotation(FRotator(-38.f, 0.f, 0.f));
-	CameraBoom->TargetArmLength = 1150.f;
+	CameraBoom->TargetArmLength = 1000.f;
 	CameraBoom->bDoCollisionTest = false;
 	CameraBoom->bUsePawnControlRotation = false;
 	CameraBoom->bInheritPitch = false;

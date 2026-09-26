@@ -6,10 +6,10 @@ Unreal Engine 5.8, C++. Design brief in `GAME.md`.
 
 ## Status
 
-Playable: a fiddler crab on a sloped 3D beach with a tide that rises and falls, burrows that flood, grip that
-the surge drains, and a dance. Food, gulls and pinching are not built. Art pipeline is in place; the hero crab
-model and environment assets are still being produced (see `Art/README.md`), so until they land the game runs
-on engine shapes.
+Playable: an animated fiddler crab on a sloped 3D beach with a tide that rises and falls, translucent water with
+foam, burrows that flood, grip that the surge drains, and a dance. Food, gulls and pinching are not built. The
+crab, sand and water are real assets (`Art/README.md`). Rocks, shells and plants still wait on CC0 environment
+assets that need network access to fetch.
 
 ## Controls
 

@@ -143,10 +143,13 @@ clear licence goes in.
 
 ## Status (2026-09-26)
 
-- Crab model, rig and animations: in progress (Art/blender/build_crab.py, rig_animate_crab.py).
-- Unreal content and level scripts: in progress (Art/unreal/, Scripts/import-art.sh, Scripts/build-level.sh).
+- Crab model, rig and four animations: **done, first pass.** 25k triangles, 49 bones, verified in Blender and in
+  the game (`Art/blender/README-crab.md`). Weakest points: the carapace paint reads a little like a tan loaf from the
+  game camera, leg bands look toy-like up close, claw relief is subtle at game distance. No LODs.
+- Unreal content and level: **done.** `Scripts/import-art.sh` then `Scripts/build-level.sh`
+  (`Art/unreal/README.md`). Water, terrain, crab shell materials, the tide parameter collection and the Beach level.
 - Environment assets (sand textures, rocks, shells, driftwood, plants): **not fetched.** The sandbox denied
   network access to `api.polyhaven.com` and `dl.polyhaven.org`, and it was not worked around. To unblock,
   allow Bash `curl` (or WebFetch) for those two hosts and re-run the environment task: pick assets from the
   Polyhaven catalogue, write `Art/blender/fetch_polyhaven.py` and `process_env.py`, and record provenance in
-  `Art/assets/polyhaven.md`. Until then terrain and props use engine shapes and a flat sand colour.
+  `Art/assets/polyhaven.md`. Until then the sand uses the procedural material, and rocks are grey spheres.

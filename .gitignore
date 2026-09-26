@@ -97,3 +97,6 @@ Thumbs.db
 
 # The editor rewrites this with engine defaults on every run. Track it once it holds real bindings.
 /Config/DefaultInput.ini
+
+# Blender working files (high-poly sculpt, rigged scene). Rebuilt by Art/blender/*.py from source.
+/Art/blender/_work/
