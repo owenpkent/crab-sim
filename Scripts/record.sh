@@ -7,6 +7,7 @@
 #
 #   Scripts/record.sh [OUT.mp4]         default videos/crab-sim-tour.mp4
 #   RECORD_TOUR=molt Scripts/record.sh  the molt clip instead, default videos/crab-sim-molt.mp4
+#   RECORD_TOUR=playtest SPEEDUP=4 CRF=30 Scripts/record.sh   a whole round played by the bot, videos/crab-sim-playtest.mp4
 #   LIMIT=150 CRF=28 Scripts/record.sh videos/small.mp4
 #   SPEEDUP=2 Scripts/record.sh videos/fast.mp4       the tour at 2x, after the capture
 #   RECORD_TIDE_SPEED=1.5 Scripts/record.sh           a faster tide (see below)
@@ -24,6 +25,9 @@
 # bigger after the first two, the third ending the round, the results panel and NEW ROUND. It runs with
 # CrabSim.FoodFloor 0.9 (test only: the crab stays fed, so there is no foraging) and a slow tide (0.3 unless
 # RECORD_TIDE_SPEED says otherwise), so the burrow stays dry.
+# RECORD_TOUR=playtest records Scripts/live/playtest.py instead: a reactive bot plays one full round (three molts, up
+# to 20 minutes) at the default tide with no cheats, left clicks only, and the run folder gets its clicks.csv. LIMIT
+# defaults to 1320 s for it; the clip is the whole round, so SPEEDUP=4 CRF=30 keeps it short.
 # Next to OUT.mp4 goes OUT.events.txt: what the tour did and what the game
 # logged, each with its time in the video (video=SECONDS, good to about half a
 # second, and divided by SPEEDUP).
@@ -40,9 +44,9 @@
 # Do not let another window cover the game: the capture is of the screen.
 #
 # Environment overrides:
-#   RECORD_TOUR=tour|molt  which tour to play (default tour)
+#   RECORD_TOUR=tour|molt|playtest  which tour to play (default tour)
 #   RECORD_TIDE_SPEED=<n>  CrabSim.TideSpeed (default 0.75: a whole tide takes 240 s; 0.3 for the molt tour)
-#   LIMIT=<s>              stop recording after this many seconds (default 240)
+#   LIMIT=<s>              stop recording after this many seconds (default 240, 1320 for the playtest)
 #   FPS=30  CRF=23         capture frame rate and x264 quality (lower is better)
 #   SPEEDUP=1              play the video this many times faster, after the capture
 #   TOUR_HOLD=<s>          seconds kept after the sweep (default 3.5)
@@ -79,13 +83,16 @@ TOUR="${RECORD_TOUR:-tour}"
 case "$TOUR" in
 	tour) TOUR_SCRIPT=tour.py; TOUR_TIDE=0.75; TOUR_EXEC="" ;;
 	molt) TOUR_SCRIPT=tour_molt.py; TOUR_TIDE=0.3; TOUR_EXEC=",CrabSim.FoodFloor 0.9" ;;
-	*) echo "RECORD_TOUR must be tour or molt: $TOUR" >&2; exit 2 ;;
+	playtest) TOUR_SCRIPT=playtest.py; TOUR_TIDE=1; TOUR_EXEC="" ;;
+	*) echo "RECORD_TOUR must be tour, molt or playtest: $TOUR" >&2; exit 2 ;;
 esac
+DEFAULT_LIMIT=240
+if [ "$TOUR" = "playtest" ]; then DEFAULT_LIMIT=1320; fi
 OUT="${1:-$ROOT/videos/crab-sim-$TOUR.mp4}"
 RESX="${RECORD_RESX:-1280}"
 RESY="${RECORD_RESY:-720}"
 TIDE_SPEED="${RECORD_TIDE_SPEED:-$TOUR_TIDE}"
-LIMIT="${LIMIT:-240}"
+LIMIT="${LIMIT:-$DEFAULT_LIMIT}"
 FPS="${FPS:-30}"
 CRF="${CRF:-23}"
 SPEEDUP="${SPEEDUP:-1}"

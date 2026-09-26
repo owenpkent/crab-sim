@@ -56,6 +56,7 @@ Scripts/live-test.sh      drive the real game with a virtual mouse and check the
 Scripts/shot.sh out.png   screenshot the running game window
 Scripts/record.sh [out.mp4]   record a scripted tour of the game as video (default videos/crab-sim-tour.mp4)
 RECORD_TOUR=molt Scripts/record.sh   record the molt tour instead (default videos/crab-sim-molt.mp4)
+RECORD_TOUR=playtest SPEEDUP=4 CRF=30 Scripts/record.sh   a bot plays one whole round (about 10 min, videos/crab-sim-playtest.mp4)
 ```
 
 `live-test.sh` opens a window and moves the real pointer for a few minutes: one game launch per scenario (`basic`,
@@ -92,6 +93,12 @@ header. The recorded mp4 and events files stay local (git-ignored).
 (about 85 s, 9 MB, local like the other clip), a short clip of the molt: the molt button refuses in the open, three molts in a burrow with the progress ring and the
 crab settling into its hole, the crab climbing out bigger after the first two, the third molt ending the round, the
 results panel and NEW ROUND. It runs with `CrabSim.FoodFloor 0.9` and a slow tide, so it needs no foraging.
+
+`RECORD_TOUR=playtest` plays `Scripts/live/playtest.py` instead: a small reactive bot that reads the state log and plays one full
+round at the default tide with left clicks only (feed the richest reachable patch, retreat to a high burrow when the sea
+rises, molt when fed, dig once when the tide is low), until the results panel. The run folder gets `clicks.csv` (every click,
+timed), `playtest.log` and five screenshots (`PLAYTEST_SHOTS=<dir>` to move them). Unlike the tours it takes as long as the
+round does (`LIMIT` defaults to 1320 s for it).
 
 Console variables and commands:
 
