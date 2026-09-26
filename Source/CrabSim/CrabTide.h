@@ -54,9 +54,10 @@ struct CRABSIM_API FCrabTideSettings
 		return FMath::Clamp((TideLevelAt(Time) - LowLevel) / FMath::Max(HighLevel - LowLevel, KINDA_SMALL_NUMBER), 0.f, 1.f);
 	}
 
+	/** True from low tide up to high tide, and false from high tide back down to low. Low tide itself is the start of the rise. */
 	bool IsRisingAt(float Time) const
 	{
-		return FMath::Sin(2.f * PI * Time / Period) > 0.f;
+		return FMath::Fmod(FMath::Max(Time, 0.f), Period) < 0.5f * Period;
 	}
 
 	/** Seconds until the tide next turns, high to low or low to high. */

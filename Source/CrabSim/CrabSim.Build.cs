@@ -16,7 +16,8 @@ public class CrabSim : ModuleRules
 			"EnhancedInput",
 			"Slate",
 			"SlateCore",
-			"ProceduralMeshComponent"
+			"ProceduralMeshComponent",
+			"AssetRegistry"
 		});
 
 		// Headers live flat in Source/CrabSim/; keep subdirectories (Tests/) able to include them.

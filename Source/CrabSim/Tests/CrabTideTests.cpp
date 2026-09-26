@@ -72,6 +72,14 @@ bool FCrabTideDirectionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("rising just after low"), S.IsRisingAt(1.f));
 	TestFalse(TEXT("falling just after high"), S.IsRisingAt(51.f));
 
+	// The turns themselves: low tide starts a rise, high tide starts a fall, and it repeats.
+	TestTrue(TEXT("rising at exactly low tide"), S.IsRisingAt(0.f));
+	TestFalse(TEXT("falling at exactly high tide"), S.IsRisingAt(50.f));
+	TestTrue(TEXT("rising again at the start of the next cycle"), S.IsRisingAt(100.f));
+	TestTrue(TEXT("rising just before high tide"), S.IsRisingAt(49.99f));
+	TestFalse(TEXT("falling just before low tide"), S.IsRisingAt(99.99f));
+	TestTrue(TEXT("negative time counts as the start"), S.IsRisingAt(-5.f));
+
 	TestNearlyEqual(TEXT("50 s to the first high"), S.SecondsToTurnAt(0.f), 50.f, 1e-3f);
 	TestNearlyEqual(TEXT("10 s to high"), S.SecondsToTurnAt(40.f), 10.f, 1e-3f);
 	TestNearlyEqual(TEXT("25 s to low"), S.SecondsToTurnAt(75.f), 25.f, 1e-3f);

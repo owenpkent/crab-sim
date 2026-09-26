@@ -94,3 +94,6 @@ Thumbs.db
 
 # Downloaded originals. Recreated by Art/blender/fetch_*.py from the manifests in Art/assets/.
 /Art/source/
+
+# The editor rewrites this with engine defaults on every run. Track it once it holds real bindings.
+/Config/DefaultInput.ini
