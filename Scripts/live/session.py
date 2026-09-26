@@ -13,8 +13,10 @@ The camera looks toward the sea along world +X, pitched down, so on screen UP is
 +X and RIGHT is +Y.
 
 Usage: session.py <game log> <output dir> [game pid] [scenario]
-  scenario is "basic" (the default: ready, dance, burrow, walk, dash) or "tide"
-  (the mouse is never touched; the sea rises, surges, sweeps the crab, falls).
+  scenario is "basic" (the default: ready, dance, burrow, walk, dash), "tide"
+  (the mouse is never touched; the sea rises, surges, sweeps the crab, falls) or
+  "forage" (click a food patch and feed, click away, click the HUD's dig button,
+  wait for the new burrow, click it and dig in; the tide is frozen at low water).
 
 Time limits are in game seconds (the t= field), which run at real time. Each
 wait also has a wall-clock guard so a stalled game cannot hang the run.
@@ -67,6 +69,27 @@ BURROW_LEAVE_WINDOW = 3.0    # s in which the crab must then walk
 BURROW_LEAVE_MIN = 100.0     # uu it must cover in that time
 LEAVE_OFFSET_PX = 250        # px below the window centre to click when leaving
 
+# forage (TideSpeed 0: the tide stays at low water)
+PATCH_INDEX = 3
+PATCH_POS = (600.0, -650.0)  # world xy of patch3, the nearest patch to the start
+FEED_BEGIN_WINDOW = 10.0     # s from the click to food_begin (a walk of about 630 uu)
+FEED_WATCH = 3.0             # s of feeding that are measured
+FEED_MIN_GAIN = 0.10         # food the crab must gain in that time (about 0.06 a second is expected)
+FEED_ARRIVE_TOL = 60.0       # uu from the patch centre while feeding
+FEED_END_WINDOW = 1.5        # s from the click away to food_end
+FEED_END_MIN = 0.05          # food the food_end event must report
+AWAY_PX = (-380, 40)         # px from the crab to click when leaving the patch: screen left is -Y
+DIG_CLEARANCE = 250.0        # uu from every burrow and patch centre, or the dig is refused
+DIG_BEGIN_WINDOW = 1.5       # s from the click on the button to dig_begin
+DIG_DONE_WINDOW = 7.0        # s from the click to dig_done (the dig takes 4 s)
+DIG_COST = 0.30
+DIG_COST_TOL = 0.04          # the drain over the dig is about 0.017 on top of the cost
+DIG_MAX_MOVE = 25.0          # uu the crab may drift while it digs
+DIG_ENTER_WINDOW = 6.0       # s from the click on the new hole to burrow_enter
+BURROW_CENTRES = [(-2450.0, 350.0), (-1000.0, -520.0), (700.0, 760.0), (1900.0, -900.0)]
+PATCH_CENTRES = [(-1300.0, 450.0), (-650.0, 520.0), (-350.0, -700.0), (600.0, -650.0), (1150.0, -80.0),
+                 (1700.0, -420.0), (1800.0, 850.0)]
+
 # tide (TideSpeed 10: a whole tide is 18 s). The limits below are for that speed; LIVE_TIDE_SPEED
 # below 10 stretches the tide-clock ones (rise, swept, fall) by 10/speed.
 try:
@@ -93,19 +116,24 @@ STATE_RE = re.compile(
     r"speed=(?P<speed>{n})\s+target=(?:(?P<tx>{n}),(?P<ty>{n})|none)\s+dash=(?P<dash>[01])"
     r"(?:\s+grip=(?P<grip>{n}))?(?:\s+depth=(?P<depth>{n}))?(?:\s+water=(?P<water>{n}))?"
     r"(?:\s+tide=(?P<tide>{n}))?(?:\s+burrow=(?P<burrow>-?\d+))?(?:\s+dance=(?P<dance>[01]))?"
-    r"(?:\s+anim=(?P<anim>\w+))?(?:\s+skel=(?P<skel>\d+))?(?:\s+swept=(?P<swept>\d+))?".format(n=_NUM))
-EVENT_RE = re.compile(r"CRABSIM_EVENT\s+(?P<name>[A-Za-z_]+)\s+t=(?P<t>{n})".format(n=_NUM))
+    r"(?:\s+anim=(?P<anim>\w+))?(?:\s+skel=(?P<skel>\d+))?(?:\s+swept=(?P<swept>\d+))?"
+    r"(?:\s+food=(?P<food>{n}))?(?:\s+feeding=(?P<feeding>-?\d+))?(?:\s+dig=(?P<dig>{n}))?(?:\s+dug=(?P<dug>\d+))?".format(n=_NUM))
+# Anything after t= is detail (patch=3 amount=0.412 ...), kept in rest.
+EVENT_RE = re.compile(r"CRABSIM_EVENT\s+(?P<name>[A-Za-z_]+)\s+t=(?P<t>{n})(?P<rest>.*)".format(n=_NUM))
 SCREEN_RE = re.compile(r"CRABSIM_SCREEN\s+t=(?P<t>{n})\s+view=(?P<vw>\d+)x(?P<vh>\d+)\s+"
                        r"crab=(?P<cx>{n}),(?P<cy>{n})(?P<rest>.*)".format(n=_NUM))
 BURROW_RE = re.compile(r"burrow(?P<i>\d+)=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
+PATCH_RE = re.compile(r"patch(?P<i>\d+)=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
+DIG_BUTTON_RE = re.compile(r"\sdig=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 READY_RE = re.compile(r"LogCrabSim:\s*CRABSIM_READY")
 PROBLEM_RE = re.compile(r"Fatal error|Ensure condition failed|Signal 11|SIGSEGV|Unhandled Exception")
 
-State = namedtuple("State", "t x y z yaw speed target dash grip depth water tide burrow dance anim skel swept",
-                   defaults=(None,) * 9)
-Event = namedtuple("Event", "name t")
-# view is (width, height) of the game viewport, crab is a pixel (or (-1, -1)), burrows maps index to a pixel.
-Screen = namedtuple("Screen", "t view crab burrows")
+State = namedtuple("State", "t x y z yaw speed target dash grip depth water tide burrow dance anim skel swept "
+                            "food feeding dig dug", defaults=(None,) * 13)
+Event = namedtuple("Event", "name t rest", defaults=("",))
+# view is (width, height) of the game viewport, crab is a pixel (or (-1, -1)), burrows and patches map index to a
+# pixel, dig is the pixel at the middle of the HUD's dig button (or None).
+Screen = namedtuple("Screen", "t view crab burrows patches dig", defaults=({}, None))
 # A place in the log: the game time, and how many states and events had been read.
 Mark = namedtuple("Mark", "t states events state")
 
@@ -124,13 +152,20 @@ def parse_state(line):
                  float(m.group("yaw")), float(m.group("speed")), target, m.group("dash") == "1",
                  opt("grip", float), opt("depth", float), opt("water", float), opt("tide", float),
                  opt("burrow", int), opt("dance", lambda v: v == "1"), opt("anim", str),
-                 opt("skel", int), opt("swept", int))
+                 opt("skel", int), opt("swept", int), opt("food", float), opt("feeding", int),
+                 opt("dig", float), opt("dug", int))
 
 
 def parse_event(line):
     """An Event from a CRABSIM_EVENT line, or None."""
     m = EVENT_RE.search(line)
-    return Event(m.group("name"), float(m.group("t"))) if m else None
+    return Event(m.group("name"), float(m.group("t")), m.group("rest").strip()) if m else None
+
+
+def event_detail(event, key):
+    """The number after key= in an event's detail (food_end's amount=0.412), or None."""
+    m = re.search(r"\b%s=(%s)" % (re.escape(key), _NUM), event.rest)
+    return float(m.group(1)) if m else None
 
 
 def parse_screen(line):
@@ -140,8 +175,12 @@ def parse_screen(line):
         return None
     burrows = {int(b.group("i")): (float(b.group("x")), float(b.group("y")))
                for b in BURROW_RE.finditer(m.group("rest"))}
+    patches = {int(b.group("i")): (float(b.group("x")), float(b.group("y")))
+               for b in PATCH_RE.finditer(m.group("rest"))}
+    dig = DIG_BUTTON_RE.search(m.group("rest"))
     return Screen(float(m.group("t")), (int(m.group("vw")), int(m.group("vh"))),
-                  (float(m.group("cx")), float(m.group("cy"))), burrows)
+                  (float(m.group("cx")), float(m.group("cy"))), burrows, patches,
+                  (float(dig.group("x")), float(dig.group("y"))) if dig else None)
 
 
 def ang_diff(a, b):
@@ -263,7 +302,7 @@ class Run:
         target = "none" if s.target is None else "%.0f,%.0f" % s.target
         text = ("%s: t=%.2f loc=%.0f,%.0f yaw=%.1f speed=%.0f target=%s dash=%d"
                 % (label, s.t, s.x, s.y, s.yaw, s.speed, target, int(s.dash)))
-        for name in ("grip", "depth", "water", "tide", "burrow", "dance", "anim", "swept"):
+        for name in ("grip", "depth", "water", "tide", "burrow", "dance", "anim", "swept", "food", "feeding", "dug"):
             value = getattr(s, name)
             if value is not None:
                 text += " %s=%s" % (name, int(value) if isinstance(value, bool) else value)
@@ -809,7 +848,143 @@ class Run:
         self.finish()
 
 
-SCENARIOS = {"basic": Run.scenario_basic, "tide": Run.scenario_tide}
+    # ---- scenario forage: steps ----
+    def clearance(self, s):
+        """Distance in uu from the state's spot to the nearest burrow or food patch centre."""
+        return min(dist_xy(s, p) for p in BURROW_CENTRES + PATCH_CENTRES)
+
+    def step_feed(self):
+        print("-- feed", flush=True)
+        screen = self.fresh_screen()
+        if screen is None or PATCH_INDEX not in screen.patches:
+            self.check(False, "a CRABSIM_SCREEN line with patch%d arrived (is this the forage build?)" % PATCH_INDEX)
+            return False
+        pixel = screen.patches[PATCH_INDEX]
+        mark = self.click_view(screen, pixel, "patch%d (%.0f,%.0f)" % ((PATCH_INDEX,) + pixel))
+        if mark is None:
+            return False
+        self.describe("start", mark.state)
+        begin = self.expect_event(mark, "food_begin", FEED_BEGIN_WINDOW,
+                                  "click on patch%d: food_begin event" % PATCH_INDEX)
+        if begin is None:
+            return False
+        limit = begin.t + FEED_WATCH
+        self.wait_clock(limit + STATE_INTERVAL)
+        window = [s for s in self.tail.states if begin.t + 0.2 <= s.t <= limit + STATE_INTERVAL]
+        if len(window) >= 2 and window[0].food is not None:
+            first, last = window[0], window[-1]
+            self.describe("feeding", last)
+            self.check(all(s.feeding == PATCH_INDEX for s in window),
+                       "feeding=%d in every state line while it feeds (%d lines)" % (PATCH_INDEX, len(window)))
+            gain = last.food - first.food
+            self.check(gain >= FEED_MIN_GAIN, "food rises while it feeds: %.3f to %.3f in %.1f s (need a gain of %.2f)"
+                       % (first.food, last.food, last.t - first.t, FEED_MIN_GAIN))
+            d = dist_xy(last, PATCH_POS)
+            self.check(d <= FEED_ARRIVE_TOL, "the crab stands on the patch: %.1f uu from (%.0f,%.0f) (need <= %.0f)"
+                       % (d, PATCH_POS[0], PATCH_POS[1], FEED_ARRIVE_TOL))
+        else:
+            self.check(False, "the state lines carry food (%d lines while feeding)" % len(window))
+        self.shot("feeding")
+
+        # Click away: it stops feeding, and the event says how much it ate.
+        screen = self.fresh_screen()
+        if screen is None:
+            self.check(False, "a CRABSIM_SCREEN line arrived before clicking away")
+            return False
+        pixel = (screen.crab[0] + AWAY_PX[0], screen.crab[1] + AWAY_PX[1])
+        mark = self.click_view(screen, pixel, "the ground %d px left of the crab" % -AWAY_PX[0])
+        if mark is None:
+            return False
+        end = self.expect_event(mark, "food_end", FEED_END_WINDOW, "click away: food_end event")
+        if end is not None:
+            amount = event_detail(end, "amount")
+            self.check(amount is not None and amount >= FEED_END_MIN, "food_end reports what it ate: amount=%s (need >= %.2f)"
+                       % (amount, FEED_END_MIN))
+        self.wait_idle(6.0)
+        time.sleep(0.8)
+        return True
+
+    def step_dig(self):
+        print("-- dig", flush=True)
+        self.tail.poll()
+        spot = self.fresh(self.now_t() + STATE_INTERVAL)
+        self.describe("standing", spot)
+        if spot is None or spot.food is None:
+            self.check(False, "a state line with food before digging")
+            return
+        near = self.clearance(spot)
+        self.check(near >= DIG_CLEARANCE, "the crab is on dry sand clear of every burrow and patch: %.0f uu from the "
+                   "nearest centre (need >= %.0f) at %.0f,%.0f" % (near, DIG_CLEARANCE, spot.x, spot.y))
+        screen = self.fresh_screen()
+        if screen is None or screen.dig is None:
+            self.check(False, "a CRABSIM_SCREEN line with the dig button arrived")
+            return
+        mark = self.click_view(screen, screen.dig, "the dig button (%.0f,%.0f)" % screen.dig)
+        if mark is None:
+            return
+        begin = self.expect_event(mark, "dig_begin", DIG_BEGIN_WINDOW, "click on the dig button: dig_begin event")
+        # The click on the button was not also a click on the ground: no walk was ordered.
+        self.wait_clock(mark.t + 1.0)
+        seen = [s for s in self.tail.states[mark.states:] if s.t <= mark.t + 1.0 + STATE_INTERVAL]
+        self.check(bool(seen) and all(s.target is None for s in seen),
+                   "the button click did not order a walk: target=none in all %d state lines after it" % len(seen))
+        self.wait_clock(mark.t + 2.0)
+        self.shot("digging")
+        done = self.expect_event(mark, "dig_done", DIG_DONE_WINDOW, "dig_done event")
+        if begin is not None and done is not None:
+            window = [s for s in self.tail.states if begin.t <= s.t <= done.t]
+            moved = max((dist_xy(s, (spot.x, spot.y)) for s in window), default=0.0)
+            self.check(moved <= DIG_MAX_MOVE, "the crab stayed put while it dug: moved at most %.1f uu (need <= %.0f)"
+                       % (moved, DIG_MAX_MOVE))
+            self.check(done.t - begin.t >= 3.5, "the dig took its four seconds: %.1f s" % (done.t - begin.t))
+        if done is None:
+            return
+        hole = event_detail(done, "burrow")
+        hole = 4 if hole is None else int(hole)
+        after = self.state_at_or_after(mark.states, done.t + 0.4)
+        self.describe("dug", after)
+        if after is not None and after.food is not None:
+            spent = spot.food - after.food
+            self.check(abs(spent - DIG_COST) <= DIG_COST_TOL, "it cost about %.2f food: %.3f before, %.3f after"
+                       % (DIG_COST, spot.food, after.food))
+            self.check(after.dug == 1, "dug=1 in the state (dug=%s)" % after.dug)
+        else:
+            self.check(False, "a state line arrived after dig_done")
+        screen = self.fresh_screen()
+        self.check(screen is not None and hole in screen.burrows and screen.burrows[hole] != (-1.0, -1.0),
+                   "the new hole is burrow%d in the screen log" % hole)
+        self.shot("dug")
+        if screen is None or hole not in screen.burrows:
+            return
+
+        # Click the new hole: the crab digs in.
+        pixel = screen.burrows[hole]
+        mark = self.click_view(screen, pixel, "the new burrow%d (%.0f,%.0f)" % ((hole,) + pixel))
+        if mark is None:
+            return
+        enter = self.expect_event(mark, "burrow_enter", DIG_ENTER_WINDOW, "click on the new hole: burrow_enter event")
+        if enter is not None:
+            inside = self.state_at_or_after(mark.states, enter.t + 0.5)
+            self.describe("inside", inside)
+            self.check(inside is not None and inside.burrow == hole, "burrow=%d in the state once dug in (burrow=%s)"
+                       % (hole, None if inside is None else inside.burrow))
+        self.shot("dug_in")
+
+    # ---- scenario forage ----
+    def scenario_forage(self):
+        first = self.begin(want_mouse=True, settle=SETTLE)
+        self.describe("first", first)
+        if first.food is None:
+            self.check(False, "the state lines carry food (is this the forage build?)")
+            raise Abort("state lines have no food field")
+        time.sleep(0.5)
+        self.shot("ready")
+        if self.step_feed():
+            self.step_dig()
+        self.finish()
+
+
+SCENARIOS = {"basic": Run.scenario_basic, "tide": Run.scenario_tide, "forage": Run.scenario_forage}
 
 
 def main():

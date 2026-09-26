@@ -21,9 +21,16 @@
 #          surge_begin event; grip falls below 0.7; swept_out event and swept=1;
 #          the crab lands within 400 uu of burrow0's beach with depth 0; the
 #          water falls again. A screenshot is saved at high tide.
+#   forage launched with CrabSim.StateLog 1,CrabSim.TideSpeed 0 (tide frozen at
+#          low tide, so it cannot interfere). In order: click patch3 (food_begin,
+#          food rising while the crab stands on it); click away (food_end with an
+#          amount); on dry sand clear of every burrow and patch, click the HUD's
+#          dig button (dig_begin, no walk ordered, the crab stays put, dig_done
+#          after 4 s, food down by about 0.30, dug=1, a new burrow4 in the screen
+#          log); click the new hole (burrow_enter, burrow=4).
 #
 # Environment overrides:
-#   LIVE_SCENARIOS="basic tide"  which scenarios to run, in this order (space or
+#   LIVE_SCENARIOS="basic tide forage"  which scenarios to run, in this order (space or
 #                          comma separated). LIVE_SCENARIOS=tide runs only one.
 #   LIVE_TIDE_SPEED=<n>    CrabSim.TideSpeed for the tide scenario (default 3). Below 10
 #                          the session multiplies its tide time limits by 10/n.
@@ -54,7 +61,7 @@ export DISPLAY="${DISPLAY:-:0}"
 
 RESX="${LIVE_RESX:-1280}"
 RESY="${LIVE_RESY:-720}"
-SCENARIOS="${LIVE_SCENARIOS:-basic tide}"
+SCENARIOS="${LIVE_SCENARIOS:-basic tide forage}"
 SCENARIOS="${SCENARIOS//,/ }"
 TIDE_SPEED="${LIVE_TIDE_SPEED:-3}"
 [[ "$TIDE_SPEED" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "LIVE_TIDE_SPEED must be a number: $TIDE_SPEED" >&2; exit 2; }
@@ -66,6 +73,7 @@ exec_cmds_for() {
 	case "$1" in
 		basic) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0" ;;
 		tide)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed $TIDE_SPEED" ;;
+		forage) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0" ;;
 		*)     return 1 ;;
 	esac
 }
@@ -98,7 +106,7 @@ wait_gone() {
 }
 
 for scn in $SCENARIOS; do
-	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide)." >&2; exit 2; }
+	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage)." >&2; exit 2; }
 done
 [ -n "${SCENARIOS// /}" ] || { echo "LIVE_SCENARIOS is empty." >&2; exit 2; }
 
