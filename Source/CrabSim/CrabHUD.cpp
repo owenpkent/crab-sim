@@ -151,8 +151,9 @@ void ACrabHUD::DrawDigButton(const ACrabPawn& Crab, float Scale)
 		Reason[0] = FChar::ToUpper(Reason[0]);
 		float ReasonW = 0.f;
 		float ReasonH = 0.f;
-		GetTextSize(Reason, ReasonW, ReasonH, Font, Scale * 0.75f);
-		DrawText(Reason, bDigging ? Text : TextDim, Rect.Max.X - ReasonW, Rect.Min.Y - 30.f * Scale, Font, Scale * 0.75f);
+		GetTextSize(Reason, ReasonW, ReasonH, Font, Scale * 0.9f);
+		DrawRect(Panel, Rect.Max.X - ReasonW - 8.f * Scale, Rect.Min.Y - 40.f * Scale, ReasonW + 16.f * Scale, ReasonH + 8.f * Scale);
+		DrawText(Reason, Text, Rect.Max.X - ReasonW, Rect.Min.Y - 36.f * Scale, Font, Scale * 0.9f);
 	}
 }
 
