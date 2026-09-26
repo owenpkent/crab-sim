@@ -37,6 +37,16 @@ static TAutoConsoleVariable<float> CVarCameraPitch(
 	TEXT("Camera pitch in degrees, negative looks down. 0 keeps the pawn's own pitch."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<int32> CVarCrabAnimation(
+	TEXT("CrabSim.CrabAnimation"), 1,
+	TEXT("0 leaves the skeletal crab in its reference pose, to tell a broken animation from a broken mesh."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<int32> CVarCrabPlainMaterial(
+	TEXT("CrabSim.CrabPlainMaterial"), 0,
+	TEXT("1 draws the skeletal crab in a plain orange engine material, to tell a broken material from a broken mesh."),
+	ECVF_Default);
+
 namespace
 {
 	constexpr float StateLogInterval = 0.2f;
@@ -221,12 +231,31 @@ void ACrabPawn::TryUseSkeletalMesh()
 	Visual->SetVisibility(false, true);
 	bUseSkeletalMesh = true;
 
-	if (Clips[static_cast<int32>(ECrabAnim::Idle)])
+	if (CVarCrabPlainMaterial.GetValueOnGameThread() != 0 && BasicMaterial)
+	{
+		UMaterialInstanceDynamic* Plain = UMaterialInstanceDynamic::Create(BasicMaterial, this);
+		Plain->SetVectorParameterValue(TEXT("Color"), ClawColor);
+		for (int32 Slot = 0; Slot < MeshComponent->GetNumMaterials(); ++Slot)
+		{
+			MeshComponent->SetMaterial(Slot, Plain);
+		}
+	}
+	if (CVarCrabAnimation.GetValueOnGameThread() == 0)
+	{
+		for (TObjectPtr<UAnimSequence>& Clip : Clips)
+		{
+			Clip = nullptr;
+		}
+	}
+	else if (Clips[static_cast<int32>(ECrabAnim::Idle)])
 	{
 		MeshComponent->PlayAnimation(Clips[static_cast<int32>(ECrabAnim::Idle)], true);
 	}
-	UE_LOG(LogCrabSim, Log, TEXT("Using SK_FiddlerCrab, clips: idle=%d scuttle=%d dance=%d dash=%d"),
-		Clips[0] != nullptr, Clips[1] != nullptr, Clips[2] != nullptr, Clips[3] != nullptr);
+	const FBoxSphereBounds Bounds = Skeletal->GetBounds();
+	UE_LOG(LogCrabSim, Log, TEXT("Using SK_FiddlerCrab, clips: idle=%d scuttle=%d dance=%d dash=%d, bounds extent %.1f,%.1f,%.1f origin %.1f,%.1f,%.1f, %d materials, %d bones"),
+		Clips[0] != nullptr, Clips[1] != nullptr, Clips[2] != nullptr, Clips[3] != nullptr,
+		Bounds.BoxExtent.X, Bounds.BoxExtent.Y, Bounds.BoxExtent.Z, Bounds.Origin.X, Bounds.Origin.Y, Bounds.Origin.Z,
+		Skeletal->GetMaterials().Num(), Skeletal->GetRefSkeleton().GetNum());
 }
 
 void ACrabPawn::BeginPlay()
