@@ -732,7 +732,7 @@ class Run:
 
         # b. hold left to the right of centre: the crab walks toward +Y
         print("-- walk right (+Y)", flush=True)
-        start, end = self.walk(300, 0)
+        start, end = self.walk(400, 0)
         if start and end:
             dx, dy = end.x - start.x, end.y - start.y
             self.check(dy > MIN_TRAVEL, "moved toward +Y: dY=%.0f (need > %.0f)" % (dy, MIN_TRAVEL))

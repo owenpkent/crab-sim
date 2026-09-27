@@ -68,8 +68,8 @@ TIDE_CAP = float(os.environ.get("TOUR_TIDE_CAP") or 90.0)
 
 # ---- where the cursor goes, in viewport pixels from the crab ----
 # The cursor's path round the crab while the button is held: left, over the top, right, and to a
-# rest point right of it. The crab walks toward the cursor's ground point, so it ends up there.
-SCUTTLE_PATH = [(-200, 20), (-20, -110), (210, -30), (240, 30)]
+# rest point right of it, left of the FOOD and BURROW buttons. The crab walks toward the cursor's ground point, so it ends up there.
+SCUTTLE_PATH = [(-200, 20), (-20, -110), (130, -30), (150, 30)]   # ends short of the FOOD button, which is 187 px right of the crab and up
 DASH_OFFSET = 330          # px left, then right, of the crab
 EXIT_CLICK = (0, 300)       # from the middle of the view: straight down the screen, up the beach and away from the sea and the creek
 REST_SPOT = (300, 200)     # where the cursor waits for the tide, from the crab
