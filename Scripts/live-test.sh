@@ -42,9 +42,17 @@
 #          walks, food_begin on the best patch, food rising); click the BURROW
 #          button (goto_burrow, food_end, burrow_enter in the highest burrow); click
 #          BURROW again while dug in (goto_refused, no walk, still in). About a minute.
+#   gull   launched with CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.GullForce 1 (tide
+#          frozen at low water; a gull comes as soon as the crab is out of a burrow). In
+#          order: gull_circling at the start; gull_landed 1400 to 1800 uu away; click the
+#          BURROW button (burrow_enter, no gull_catch); gull_left with reason=burrow, the
+#          round still on; click elsewhere (burrow_exit) and leave the pointer alone: a new
+#          gull stalks and catches the crab standing still (gull_catch within 150 uu, no
+#          gull_scared, round_eaten, over=1 eaten=1); click NEW ROUND (round_new, over=0
+#          eaten=0). About two minutes. The other scenarios run with CrabSim.Gulls 0.
 #
 # Environment overrides:
-#   LIVE_SCENARIOS="basic tide forage molt goto"  which scenarios to run, in this order (space or
+#   LIVE_SCENARIOS="basic tide forage molt goto gull"  which scenarios to run, in this order (space or
 #                          comma separated). LIVE_SCENARIOS=tide runs only one.
 #   LIVE_TIDE_SPEED=<n>    CrabSim.TideSpeed for the tide scenario (default 3). Below 10
 #                          the session multiplies its tide time limits by 10/n.
@@ -75,7 +83,7 @@ export DISPLAY="${DISPLAY:-:0}"
 
 RESX="${LIVE_RESX:-1280}"
 RESY="${LIVE_RESY:-720}"
-SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto}"
+SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto gull}"
 SCENARIOS="${SCENARIOS//,/ }"
 TIDE_SPEED="${LIVE_TIDE_SPEED:-3}"
 [[ "$TIDE_SPEED" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "LIVE_TIDE_SPEED must be a number: $TIDE_SPEED" >&2; exit 2; }
@@ -85,11 +93,12 @@ export LIVE_TIDE_SPEED="$TIDE_SPEED"   # the session stretches its tide time lim
 # it one command with junk on the end.
 exec_cmds_for() {
 	case "$1" in
-		basic) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0" ;;
-		tide)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed $TIDE_SPEED" ;;
-		forage) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0" ;;
-		molt)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.FoodFloor 0.9" ;;
-		goto)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0" ;;
+		basic) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0" ;;
+		tide)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed $TIDE_SPEED,CrabSim.Gulls 0" ;;
+		forage) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0" ;;
+		molt)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.FoodFloor 0.9,CrabSim.Gulls 0" ;;
+		goto)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0" ;;
+		gull)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.GullForce 1" ;;
 		*)     return 1 ;;
 	esac
 }
@@ -122,7 +131,7 @@ wait_gone() {
 }
 
 for scn in $SCENARIOS; do
-	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto)." >&2; exit 2; }
+	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto gull)." >&2; exit 2; }
 done
 [ -n "${SCENARIOS// /}" ] || { echo "LIVE_SCENARIOS is empty." >&2; exit 2; }
 

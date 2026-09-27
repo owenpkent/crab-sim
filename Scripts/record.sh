@@ -37,6 +37,7 @@
 # with the game, so the forage, dig and burrow beats have to finish before the water
 # reaches the flats where they happen: at the default speed 0.75 that is about 50 s into the
 # clip, and faster tides leave less time. Full HUD (tide gauge, grip bar, hints) stays on.
+# The tour and molt clips run with CrabSim.Gulls 0 so no gull interrupts them; the playtest runs with gulls on.
 #
 # Needs: an X11 session, write access to /dev/uinput, xwininfo, xprop, and ffmpeg
 # with x11grab and libx264. Opens a game window and drives the real pointer, so
@@ -81,8 +82,8 @@ export DISPLAY="${DISPLAY:-:0}"
 case "${1:-}" in -h|--help) awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} NR > 1 {exit}' "$0"; exit 0 ;; esac
 TOUR="${RECORD_TOUR:-tour}"
 case "$TOUR" in
-	tour) TOUR_SCRIPT=tour.py; TOUR_TIDE=0.75; TOUR_EXEC="" ;;
-	molt) TOUR_SCRIPT=tour_molt.py; TOUR_TIDE=0.3; TOUR_EXEC=",CrabSim.FoodFloor 0.9" ;;
+	tour) TOUR_SCRIPT=tour.py; TOUR_TIDE=0.75; TOUR_EXEC=",CrabSim.Gulls 0" ;;
+	molt) TOUR_SCRIPT=tour_molt.py; TOUR_TIDE=0.3; TOUR_EXEC=",CrabSim.FoodFloor 0.9,CrabSim.Gulls 0" ;;
 	playtest) TOUR_SCRIPT=playtest.py; TOUR_TIDE=1; TOUR_EXEC="" ;;
 	*) echo "RECORD_TOUR must be tour, molt or playtest: $TOUR" >&2; exit 2 ;;
 esac

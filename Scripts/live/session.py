@@ -4,10 +4,11 @@ Drives the real game window with a virtual mouse (buttons through
 /dev/uinput, pointer placement through XWarpPointer) and reads what the crab
 and the sea did from the lines the game logs under `CrabSim.StateLog 1`:
 CRABSIM_STATE (crab and water, every 0.2 s), CRABSIM_EVENT (dance, burrow and
-tide events) and CRABSIM_SCREEN (where the crab and burrows are on screen, every
-0.5 s). Everything asserted comes from the log. Screenshots are for a human
-looking afterwards and nothing reads them. Game output is data: it is matched
-with regular expressions and never executed.
+tide events), CRABSIM_SCREEN (where the crab and burrows are on screen, every
+0.5 s) and CRABSIM_GULL (the gull, every 0.2 s while one is active). Everything
+asserted comes from the log. Screenshots are for a human looking afterwards and
+nothing reads them. Game output is data: it is matched with regular expressions
+and never executed.
 
 The camera looks toward the sea along world +X, pitched down, so on screen UP is
 +X and RIGHT is +Y.
@@ -21,7 +22,10 @@ Usage: session.py <game log> <output dir> [game pid] [scenario]
   molt and leave to cancel it, dig in again, molt to the end; the tide is frozen at low
   water and CrabSim.FoodFloor keeps the crab fed) or "goto" (click the HUD's FOOD button
   and feed at the best patch, click BURROW and dig in at the highest burrow, click
-  BURROW again while dug in and get refused; the tide is frozen at low water).
+  BURROW again while dug in and get refused; the tide is frozen at low water) or "gull"
+  (CrabSim.GullForce 1 brings a gull at once: answer it with the BURROW button and dig in so it gives
+  up, then leave the burrow and stand still to be eaten, and start a new round; the tide is frozen at
+  low water).
 
 Time limits are in game seconds (the t= field), which run at real time. Each
 wait also has a wall-clock guard so a stalled game cannot hang the run.
@@ -125,6 +129,22 @@ GOTO_BURROW_INDEX = 0        # burrow0, the highest floor, is the button's choic
 GOTO_BURROW_WINDOW = 30.0    # s from the click on BURROW to burrow_enter (burrow0 is about 3200 uu away)
 GOTO_REFUSE_MOVE = 5.0       # uu the dug-in crab may drift while a refused click is made
 
+# gull (TideSpeed 0, CrabSim.GullForce 1: a gull circles as soon as the crab is out of a burrow)
+GULL_CIRCLE_WINDOW = 10.0    # s from the first state to gull_circling
+GULL_LAND_WINDOW = 25.0      # s from gull_circling to gull_landed (12 s circling and 4 s gliding, plus slack)
+GULL_LAND_MIN = 1400.0       # uu from the crab at which the gull lands
+GULL_LAND_MAX = 1800.0
+GULL_LAND_TOL = 50.0
+GULL_ENTER_WINDOW = 45.0     # s from the click on BURROW to burrow_enter
+GULL_LEAVE_WINDOW = 12.0     # s from burrow_enter to gull_left (the gull gives up after 5 s)
+GULL_CATCH_WINDOW = 75.0     # s from burrow_exit to gull_catch (a new gull circles, lands, stalks and catches: 40 to 50 s)
+GULL_CATCH_RANGE = 150.0     # uu the gull must be within to catch
+GULL_CATCH_TOL = 30.0
+GULL_EATEN_WINDOW = 2.0      # s from gull_catch to round_eaten and over=1 eaten=1
+GULL_STILL_WINDOW = 3.0      # s before the catch in which the crab must have stood still
+GULL_STILL_MOVE = 25.0       # uu the crab may drift in that time
+GULL_NEW_ROUND_WINDOW = 2.0  # s from the click on NEW ROUND to round_new and over=0 eaten=0
+
 # tide (TideSpeed 10: a whole tide is 18 s). The limits below are for that speed; LIVE_TIDE_SPEED
 # below 10 stretches the tide-clock ones (rise, swept, fall) by 10/speed.
 try:
@@ -154,11 +174,13 @@ STATE_RE = re.compile(
     r"(?:\s+anim=(?P<anim>\w+))?(?:\s+skel=(?P<skel>\d+))?(?:\s+swept=(?P<swept>\d+))?"
     r"(?:\s+food=(?P<food>{n}))?(?:\s+feeding=(?P<feeding>-?\d+))?(?:\s+dig=(?P<dig>{n}))?(?:\s+dug=(?P<dug>\d+))?"
     r"(?:\s+molts=(?P<molts>\d+))?(?:\s+molt=(?P<molt>{n}))?(?:\s+soft=(?P<soft>{n}))?(?:\s+over=(?P<over>[01]))?"
-    r"(?:\s+scale=(?P<scale>{n}))?".format(n=_NUM))
+    r"(?:\s+scale=(?P<scale>{n}))?(?:\s+eaten=(?P<eaten>[01]))?".format(n=_NUM))
 # Anything after t= is detail (patch=3 amount=0.412 ...), kept in rest.
 EVENT_RE = re.compile(r"CRABSIM_EVENT\s+(?P<name>[A-Za-z_]+)\s+t=(?P<t>{n})(?P<rest>.*)".format(n=_NUM))
 SCREEN_RE = re.compile(r"CRABSIM_SCREEN\s+t=(?P<t>{n})\s+view=(?P<vw>\d+)x(?P<vh>\d+)\s+"
                        r"crab=(?P<cx>{n}),(?P<cy>{n})(?P<rest>.*)".format(n=_NUM))
+GULL_RE = re.compile(r"CRABSIM_GULL\s+t=(?P<t>{n})\s+phase=(?P<phase>\w+)\s+loc=(?P<x>{n}),(?P<y>{n})\s+"
+                     r"alt=(?P<alt>{n})\s+dist=(?P<dist>{n})\s+patch=(?P<patch>-?\d+)\s+count=(?P<count>\d+)".format(n=_NUM))
 BURROW_RE = re.compile(r"burrow(?P<i>\d+)=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 PATCH_RE = re.compile(r"patch(?P<i>\d+)=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 DIG_BUTTON_RE = re.compile(r"\sdig=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
@@ -170,7 +192,7 @@ READY_RE = re.compile(r"LogCrabSim:\s*CRABSIM_READY")
 PROBLEM_RE = re.compile(r"Fatal error|Ensure condition failed|Signal 11|SIGSEGV|Unhandled Exception")
 
 State = namedtuple("State", "t x y z yaw speed target dash grip depth water tide burrow dance anim skel swept "
-                            "food feeding dig dug molts molt soft over scale", defaults=(None,) * 18)
+                            "food feeding dig dug molts molt soft over scale eaten", defaults=(None,) * 19)
 Event = namedtuple("Event", "name t rest", defaults=("",))
 # view is (width, height) of the game viewport, crab is a pixel (or (-1, -1)), burrows and patches map index to a
 # pixel, dig, molt, newround, gofood and goburrow are the pixels at the middle of the HUD's dig button, molt button,
@@ -179,6 +201,9 @@ Screen = namedtuple("Screen", "t view crab burrows patches dig molt newround gof
                     defaults=({}, None, None, None, None, None))
 # A place in the log: the game time, and how many states and events had been read.
 Mark = namedtuple("Mark", "t states events state")
+# The gull: phase is Circling, Landing, Stalking, Lunging, Leaving or Caught, loc and alt place it, dist is uu to the
+# crab, patch is the patch it stands on (or -1) and count is how many gulls have come.
+Gull = namedtuple("Gull", "t phase x y alt dist patch count")
 
 
 def parse_state(line):
@@ -197,7 +222,7 @@ def parse_state(line):
                  opt("burrow", int), opt("dance", lambda v: v == "1"), opt("anim", str),
                  opt("skel", int), opt("swept", int), opt("food", float), opt("feeding", int),
                  opt("dig", float), opt("dug", int), opt("molts", int), opt("molt", float), opt("soft", float),
-                 opt("over", lambda v: v == "1"), opt("scale", float))
+                 opt("over", lambda v: v == "1"), opt("scale", float), opt("eaten", lambda v: v == "1"))
 
 
 def parse_event(line):
@@ -233,6 +258,15 @@ def parse_screen(line):
                   (float(again.group("x")), float(again.group("y"))) if again else None,
                   (float(food.group("x")), float(food.group("y"))) if food else None,
                   (float(hole.group("x")), float(hole.group("y"))) if hole else None)
+
+
+def parse_gull(line):
+    """A Gull from a CRABSIM_GULL line, or None."""
+    m = GULL_RE.search(line)
+    if not m:
+        return None
+    return Gull(float(m.group("t")), m.group("phase"), float(m.group("x")), float(m.group("y")),
+                float(m.group("alt")), float(m.group("dist")), int(m.group("patch")), int(m.group("count")))
 
 
 def ang_diff(a, b):
@@ -277,6 +311,7 @@ class LogTail:
         self.states = []
         self.events = []
         self.screens = []
+        self.gulls = []
         self.ready = False
         self.problems = []
 
@@ -304,6 +339,10 @@ class LogTail:
                 screen = parse_screen(text)
                 if screen:
                     self.screens.append(screen)
+            elif "CRABSIM_GULL" in text:
+                gull = parse_gull(text)
+                if gull:
+                    self.gulls.append(gull)
             elif READY_RE.search(text):
                 self.ready = True
             elif PROBLEM_RE.search(text) and len(self.problems) < 5:
@@ -311,6 +350,9 @@ class LogTail:
 
     def latest(self):
         return self.states[-1] if self.states else None
+
+    def latest_gull(self):
+        return self.gulls[-1] if self.gulls else None
 
 
 def process_alive(pid):
@@ -365,7 +407,7 @@ class Run:
         text = ("%s: t=%.2f loc=%.0f,%.0f yaw=%.1f speed=%.0f target=%s dash=%d"
                 % (label, s.t, s.x, s.y, s.yaw, s.speed, target, int(s.dash)))
         for name in ("grip", "depth", "water", "tide", "burrow", "dance", "anim", "swept", "food", "feeding", "dug",
-                     "molts", "molt", "soft", "scale"):
+                     "molts", "molt", "soft", "scale", "eaten"):
             value = getattr(s, name)
             if value is not None:
                 text += " %s=%s" % (name, int(value) if isinstance(value, bool) else value)
@@ -1142,6 +1184,107 @@ class Run:
                    % (moved, GOTO_REFUSE_MOVE))
         self.shot("refused")
 
+    # ---- scenario gull: steps ----
+    def mark_at(self, event):
+        """A Mark at a logged event: its game time, the states logged before it and the events from it on."""
+        states = sum(1 for s in self.tail.states if s.t < event.t)
+        return Mark(event.t, states, self.tail.events.index(event), self.tail.states[states - 1] if states else None)
+
+    def step_gull_arrive(self, origin):
+        """The gull circles, glides down and lands 1400 to 1800 uu away. Returns the gull_landed event, or None."""
+        print("-- the gull arrives", flush=True)
+        circling = self.expect_event(origin, "gull_circling", GULL_CIRCLE_WINDOW, "the crab is out of a burrow: gull_circling event")
+        if circling is None:
+            return None
+        self.note("gull_circling: %s" % circling.rest)
+        self.shot("circling")
+        landed = self.expect_event(self.mark_at(circling), "gull_landed", GULL_LAND_WINDOW, "the gull glides down: gull_landed event")
+        if landed is None:
+            return None
+        self.note("gull_landed: %s" % landed.rest)
+        d = event_detail(landed, "distance")
+        self.check(d is not None and GULL_LAND_MIN - GULL_LAND_TOL <= d <= GULL_LAND_MAX + GULL_LAND_TOL,
+                   "it lands %.0f to %.0f uu from the crab (+/- %.0f): distance=%s"
+                   % (GULL_LAND_MIN, GULL_LAND_MAX, GULL_LAND_TOL, d))
+        self.shot("landed")
+        return landed
+
+    def step_gull_burrow(self):
+        """Answer the gull with the BURROW button. Returns True once the gull has given up."""
+        print("-- BURROW button: the gull gives up", flush=True)
+        mark, went = self.click_goto_button("goburrow", "BURROW", "goto_burrow")
+        if went is None:
+            return False
+        enter = self.expect_event(mark, "burrow_enter", GULL_ENTER_WINDOW, "the crab walks to the burrow: burrow_enter event")
+        if enter is None:
+            return False
+        self.check(self.find_event(0, "gull_catch", math.inf) is None, "the crab was not caught on the way: no gull_catch was logged")
+        left = self.expect_event(self.mark_at(enter), "gull_left", GULL_LEAVE_WINDOW, "the crab is dug in: gull_left event")
+        if left is None:
+            return False
+        self.note("gull_left: %s" % left.rest)
+        self.check("reason=burrow" in left.rest, "the gull gave up because of the burrow: %s" % left.rest)
+        self.check(self.find_event(0, "gull_catch", math.inf) is None, "and still no gull_catch was logged")
+        seen = [s for s in self.tail.states[mark.states:] if s.t <= left.t]
+        self.check(bool(seen) and all(s.over is False for s in seen),
+                   "the round stayed on: over=0 in all %d state lines from the click to gull_left" % len(seen))
+        self.shot("gull_left")
+        return True
+
+    def step_gull_eaten(self):
+        """Leave the burrow and stand still. Returns True once a gull has caught the crab."""
+        print("-- ignoring the next gull", flush=True)
+        self.wait_idle(2.0)
+        screen = self.fresh_screen()
+        if screen is None:
+            self.check(False, "a CRABSIM_SCREEN line arrived before leaving the burrow")
+            return False
+        offset = min(LEAVE_OFFSET_PX, screen.view[1] // 2 - VIEW_MARGIN)
+        pixel = (screen.view[0] / 2.0, screen.view[1] / 2.0 + offset)
+        mark = self.click_view(screen, pixel, "the ground %d px below the centre" % offset)
+        if mark is None:
+            return False
+        out = self.expect_event(mark, "burrow_exit", BURROW_EXIT_WINDOW, "click elsewhere: burrow_exit event")
+        if out is None:
+            return False
+        after = self.mark_at(out)
+        catch = self.expect_event(after, "gull_catch", GULL_CATCH_WINDOW,
+                                  "the pointer is left alone and a new gull circles, lands, stalks and catches the crab: gull_catch event")
+        if catch is None:
+            return False
+        self.note("gull_catch: %s" % catch.rest)
+        d = event_detail(catch, "distance")
+        self.check(d is not None and d <= GULL_CATCH_RANGE + GULL_CATCH_TOL,
+                   "the gull was within %.0f uu (+ %.0f) when it caught the crab: distance=%s" % (GULL_CATCH_RANGE, GULL_CATCH_TOL, d))
+        self.check(self.find_event(after.events, "gull_scared", catch.t) is None, "the gull was not scared off: no gull_scared was logged")
+        time.sleep(0.5)
+        self.shot("eaten")
+
+        at = self.mark_at(catch)
+        eaten = self.expect_event(at, "round_eaten", GULL_EATEN_WINDOW, "the round ends: round_eaten event")
+        if eaten is not None:
+            self.note("round_eaten: %s" % eaten.rest)
+        self.expect_state(at, lambda s: s.over and s.eaten, GULL_EATEN_WINDOW, "a state line with over=1 and eaten=1")
+        still = [s for s in self.tail.states if catch.t - GULL_STILL_WINDOW <= s.t <= catch.t]
+        if still:
+            moved = max(dist_xy(s, (still[-1].x, still[-1].y)) for s in still)
+            self.check(moved <= GULL_STILL_MOVE, "the crab stood still for the %.0f s before the catch: moved %.1f uu (need <= %.0f)"
+                       % (GULL_STILL_WINDOW, moved, GULL_STILL_MOVE))
+        return True
+
+    def step_gull_new_round(self):
+        print("-- NEW ROUND button", flush=True)
+        screen = self.fresh_screen()
+        if screen is None or screen.newround is None:
+            self.check(False, "a CRABSIM_SCREEN line with the new round button arrived (is the results panel up?)")
+            return
+        mark = self.click_view(screen, screen.newround, "the NEW ROUND button (%.0f,%.0f)" % screen.newround)
+        if mark is None:
+            return
+        self.expect_event(mark, "round_new", GULL_NEW_ROUND_WINDOW, "click on NEW ROUND: round_new event")
+        self.expect_state(mark, lambda s: s.over is False and s.eaten is False, GULL_NEW_ROUND_WINDOW,
+                          "a state line with over=0 and eaten=0")
+
     # ---- scenario molt: steps ----
     def step_molt_refused(self):
         print("-- molt refused in the open", flush=True)
@@ -1331,6 +1474,20 @@ class Run:
                 self.step_goto_refused(hole)
         self.finish()
 
+    # ---- scenario gull ----
+    def scenario_gull(self):
+        first = self.begin(want_mouse=True, settle=SETTLE)
+        self.describe("first", first)
+        if first.eaten is None:
+            self.check(False, "the state lines carry eaten (is this the gull build?)")
+            raise Abort("state lines have no eaten field")
+        self.check(first.eaten is False, "the round starts with the crab not eaten: eaten=%s" % first.eaten)
+        start = self.tail.states[0]
+        if self.step_gull_arrive(Mark(start.t, 0, 0, start)) is not None and self.step_gull_burrow():
+            if self.step_gull_eaten():
+                self.step_gull_new_round()
+        self.finish()
+
     # ---- scenario forage ----
     def scenario_forage(self):
         first = self.begin(want_mouse=True, settle=SETTLE)
@@ -1346,7 +1503,7 @@ class Run:
 
 
 SCENARIOS = {"basic": Run.scenario_basic, "tide": Run.scenario_tide, "forage": Run.scenario_forage, "molt": Run.scenario_molt,
-             "goto": Run.scenario_goto}
+             "goto": Run.scenario_goto, "gull": Run.scenario_gull}
 
 
 def main():
