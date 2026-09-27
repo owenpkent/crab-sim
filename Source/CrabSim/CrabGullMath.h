@@ -30,13 +30,13 @@ namespace CrabGull
 		// --- How it arrives ---
 		/** The loop it flies before it lands: no threat, s. */
 		static constexpr float CircleSeconds = 12.f;
-		/** The loop's middle is this far from the crab, uu, toward the sea (within CircleArc degrees of it). */
-		static constexpr float CircleDistanceMin = 1500.f;
-		static constexpr float CircleDistanceMax = 2200.f;
+		/** The loop's middle is this far from the crab, uu, toward the sea (within CircleArc degrees of it), and the loop this wide. */
+		static constexpr float CircleDistanceMin = 900.f;
+		static constexpr float CircleDistanceMax = 1300.f;
 		static constexpr float CircleArc = 80.f;
-		static constexpr float CircleRadius = 500.f;
+		static constexpr float CircleRadius = 400.f;
 		/** How high it flies while it circles, uu, and how fast it goes round, radians a second. */
-		static constexpr float CircleAltitude = 420.f;
+		static constexpr float CircleAltitude = 350.f;
 		static constexpr float CircleAngularSpeed = 0.9f;
 		/** It glides down to the ground this long, then eats where it lands this long before it sets out, s. */
 		static constexpr float LandGlideSeconds = 4.f;

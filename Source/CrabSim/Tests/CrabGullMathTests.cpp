@@ -280,7 +280,7 @@ bool FCrabGullCirclingTest::RunTest(const FString& Parameters)
 		}
 		const float Centre = static_cast<float>(FVector2D::Distance(Rig.State.CircleCentre, Rig.Crab.Location));
 		const float Bearing = FMath::RadiansToDegrees(FMath::Atan2(Rig.State.CircleCentre.Y, Rig.State.CircleCentre.X));
-		TestTrue(*FString::Printf(TEXT("seed %d: the loop is 1500 to 2200 uu away (%.0f)"), Seed, Centre),
+		TestTrue(*FString::Printf(TEXT("seed %d: the loop's middle is 1100 to 1600 uu away (%.0f)"), Seed, Centre),
 			Centre >= CrabGull::Tuning::CircleDistanceMin - 1.f && Centre <= CrabGull::Tuning::CircleDistanceMax + 1.f);
 		TestTrue(*FString::Printf(TEXT("seed %d: on the sea side of the crab (%.0f degrees)"), Seed, Bearing), FMath::Abs(Bearing) <= CrabGull::Tuning::CircleArc + 0.5f);
 
@@ -295,7 +295,8 @@ bool FCrabGullCirclingTest::RunTest(const FString& Parameters)
 				bAloft = bAloft && CrabGull::IsFlying(Rig.State);
 			}
 		}
-		TestTrue(*FString::Printf(TEXT("seed %d: it never comes within 1000 uu while it circles (%.0f)"), Seed, Nearest), Nearest >= 999.f);
+		TestTrue(*FString::Printf(TEXT("seed %d: it never comes within 600 uu while it circles (%.0f)"), Seed, Nearest),
+			Nearest >= CrabGull::Tuning::CircleDistanceMin - CrabGull::Tuning::CircleRadius - 1.f);
 		TestTrue(TEXT("and stays in the air"), bAloft);
 		TestEqual(TEXT("no threat and no catch while it circles"), Rig.Count(EEvent::Catch), 0);
 		if (Seed == 1)

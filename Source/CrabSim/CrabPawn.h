@@ -155,8 +155,14 @@ public:
 
 	// --- The round ------------------------------------------------------------------
 
-	/** Won at three molts. The results panel shows and the tide, feeding, digging and walking are ignored until a new round. */
+	/** Won at three molts, or lost to a gull. The results panel shows and the tide, feeding, digging and walking are ignored until a new round. */
 	bool IsRoundOver() const { return bRoundOver; }
+	/** The round ended because a gull caught the crab, not because it is fully grown. */
+	bool IsEaten() const { return bEaten; }
+	/** Which round this is: 0 for the first, one more with each new round. The gull seeds itself with it. */
+	int32 GetRoundIndex() const { return RoundIndex; }
+	/** A gull caught the crab: the round ends, with no best time. Ignored once the round is over. */
+	void EatenByGull();
 	/** Seconds since the round began. Stops when it is won. */
 	float GetRoundSeconds() const { return RoundSeconds; }
 	int32 GetRoundDug() const { return RoundDug; }
@@ -171,6 +177,9 @@ public:
 	void SetRoundStart(const FVector2D& XY) { RoundStartXY = XY; }
 
 	// --- Survival -------------------------------------------------------------
+
+	/** How fast the crab is moving over the ground now, uu/s. */
+	float GetGroundSpeed() const;
 
 	/** 1 full, 0 swept away. */
 	float GetGrip() const { return Grip; }
@@ -314,6 +323,8 @@ private:
 	bool bMolting = false;
 	bool bRoundOver = false;
 	bool bNewBest = false;
+	bool bEaten = false;
+	int32 RoundIndex = 0;
 	int32 PendingBurrow = INDEX_NONE;
 	int32 PendingPatch = INDEX_NONE;
 	int32 FeedingPatch = INDEX_NONE;

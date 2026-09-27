@@ -31,6 +31,17 @@ namespace CrabHud
 	constexpr float FullHintSeconds = 60.f;
 	/** The help text is never smaller than this on screen, px at scale 1. */
 	constexpr float HintMinPixels = 16.f;
+	/** The gull banner, top left, above the tide gauge and out of the way of the gull's own approach, at scale 1. */
+	constexpr float GullBannerWidth = 380.f;
+	constexpr float GullBannerHeight = 56.f;
+	constexpr float GullBannerTop = 8.f;
+	constexpr float GullBannerLeft = 24.f;
+	/** The gull arrow's box (the arrow and its distance text), half its width and height, and its gap to the view's edge, at scale 1. */
+	constexpr float GullArrowHalfWidth = 64.f;
+	constexpr float GullArrowHalfHeight = 60.f;
+	constexpr float GullArrowInset = 10.f;
+	/** The ground seen from the camera's pitch is squashed on screen: a world step along the view's depth shows this much as tall as a step across it is wide. */
+	constexpr float GroundForeshortening = 0.62f;
 
 	/** The readout scales with the window, so it is as big to read at 4K as at 720p. */
 	inline float ScaleForHeight(float ViewHeight)
@@ -195,6 +206,135 @@ namespace CrabHud
 		return NewRoundButtonRect(ViewWidth, ViewHeight).ExpandBy(Margin).IsInside(Pixel);
 	}
 
+	/** The gull banner: top left, clear of the tide gauge under it and of the message line beside it. */
+	inline FBox2D GullBannerRect(float ViewWidth, float ViewHeight)
+	{
+		const float Scale = ScaleForHeight(ViewHeight);
+		const FVector2D Size(GullBannerWidth * Scale, GullBannerHeight * Scale);
+		const FVector2D Min(GullBannerLeft * Scale, GullBannerTop * Scale);
+		return FBox2D(Min, Min + Size);
+	}
+
+	/**
+	 * Which way the gull is on screen, as a unit vector from the middle of the view (x right, y down). The camera
+	 * is fixed and looks toward +X with +Y on its right, so a gull further along +X is up, and one at +Y is right.
+	 * Up is foreshortened by the pitch. Up when the gull is on the crab.
+	 */
+	inline FVector2D GullArrowDirection(const FVector2D& CrabXY, const FVector2D& GullXY)
+	{
+		FVector2D Screen(GullXY.Y - CrabXY.Y, -(GullXY.X - CrabXY.X) * GroundForeshortening);
+		if (!Screen.Normalize())
+		{
+			return FVector2D(0.0, -1.0);
+		}
+		return Screen;
+	}
+
+	/** Everything else on the HUD that a gull banner or arrow must keep clear of, with room for the text that comes and goes (reason lines, labels, the message). */
+	inline TArray<FBox2D> GullKeepClearZones(float ViewWidth, float ViewHeight)
+	{
+		const float Scale = ScaleForHeight(ViewHeight);
+		const FVector2D Wide(10.f * Scale, 10.f * Scale);
+		TArray<FBox2D> Zones;
+		Zones.Add(TideGaugeRect(ViewWidth, ViewHeight).ExpandBy(8.f * Scale));
+		Zones.Add(HintPanelRect(ViewWidth, ViewHeight).ExpandBy(6.f * Scale));
+
+		const FBox2D Grip = GripBarRect(ViewWidth, ViewHeight);
+		Zones.Add(FBox2D(Grip.Min - FVector2D(10.f, 44.f) * Scale, Grip.Max + Wide));
+		const FBox2D Food = FoodBarRect(ViewWidth, ViewHeight);
+		const FBox2D FirstPip = MoltPipRect(ViewWidth, ViewHeight, 0);
+		const FBox2D LastPip = MoltPipRect(ViewWidth, ViewHeight, 2);
+		const float FoodRight = FMath::Max(Food.Max.X, LastPip.Max.X + 110.f * Scale);
+		Zones.Add(FBox2D(FirstPip.Min - FVector2D(10.f, 8.f) * Scale, FVector2D(FoodRight, Food.Max.Y) + Wide));
+
+		// Each button with its reason line above it, right-aligned to the button and growing left as far as its words run.
+		const float Up = 50.f * Scale;
+		const float Margin = DigButtonHitMargin * Scale + 4.f * Scale;
+		const FBox2D Dig = DigButtonRect(ViewWidth, ViewHeight);
+		const FBox2D Molt = MoltButtonRect(ViewWidth, ViewHeight);
+		const FBox2D Burrow = BurrowButtonRect(ViewWidth, ViewHeight);
+		const FBox2D FoodButton = FoodButtonRect(ViewWidth, ViewHeight);
+		Zones.Add(FBox2D(FVector2D(Dig.Min.X - 250.f * Scale, Dig.Min.Y - Up), Dig.Max + FVector2D(Margin, Margin)));
+		Zones.Add(FBox2D(FVector2D(Molt.Min.X - 250.f * Scale, Molt.Min.Y - Up), Molt.Max + FVector2D(Margin, Margin)));
+		Zones.Add(FBox2D(FVector2D(Burrow.Min.X - Margin - 40.f * Scale, Burrow.Min.Y - Up), Burrow.Max + FVector2D(Margin, Margin)));
+		Zones.Add(FBox2D(FVector2D(FoodButton.Min.X - Margin - 40.f * Scale, FoodButton.Min.Y - Up), FoodButton.Max + FVector2D(Margin, Margin)));
+
+		// The message line: middle of the top, a line or two of big text.
+		Zones.Add(FBox2D(FVector2D(ViewWidth * 0.5f - 330.f * Scale, ViewHeight * 0.12f - 12.f * Scale), FVector2D(ViewWidth * 0.5f + 330.f * Scale, ViewHeight * 0.12f + 46.f * Scale)));
+		return Zones;
+	}
+
+	/**
+	 * Where the gull arrow sits: on the frame just inside the view's edge in the gull's direction, moved to the nearest
+	 * spot where its box (the arrow and the distance under it) keeps clear of the banner and of every HUD element,
+	 * and of the Extra zones the caller adds (the gull itself, when it is on screen).
+	 */
+	inline FBox2D GullArrowBox(float ViewWidth, float ViewHeight, const FVector2D& Direction, const TArray<FBox2D>& Extra = TArray<FBox2D>())
+	{
+		const float Scale = ScaleForHeight(ViewHeight);
+		const FVector2D Half(GullArrowHalfWidth * Scale, GullArrowHalfHeight * Scale);
+		const FVector2D Low = Half + FVector2D(GullArrowInset * Scale, GullArrowInset * Scale);
+		const FVector2D High = FVector2D(ViewWidth, ViewHeight) - Low;
+		const FVector2D Middle(ViewWidth * 0.5f, ViewHeight * 0.5f);
+
+		double Reach = BIG_NUMBER;
+		if (Direction.X > 1e-6)
+		{
+			Reach = FMath::Min(Reach, (High.X - Middle.X) / Direction.X);
+		}
+		else if (Direction.X < -1e-6)
+		{
+			Reach = FMath::Min(Reach, (Low.X - Middle.X) / Direction.X);
+		}
+		if (Direction.Y > 1e-6)
+		{
+			Reach = FMath::Min(Reach, (High.Y - Middle.Y) / Direction.Y);
+		}
+		else if (Direction.Y < -1e-6)
+		{
+			Reach = FMath::Min(Reach, (Low.Y - Middle.Y) / Direction.Y);
+		}
+		const FVector2D Ideal = Reach >= BIG_NUMBER ? FVector2D(Middle.X, Low.Y) : Middle + Direction * Reach;
+
+		TArray<FBox2D> Zones = GullKeepClearZones(ViewWidth, ViewHeight);
+		Zones.Add(GullBannerRect(ViewWidth, ViewHeight).ExpandBy(8.f * Scale));
+		Zones.Append(Extra);
+		auto IsFree = [&](const FVector2D& Centre)
+		{
+			const FBox2D Box(Centre - Half, Centre + Half);
+			for (const FBox2D& Zone : Zones)
+			{
+				if (Zone.Intersect(Box))
+				{
+					return false;
+				}
+			}
+			return true;
+		};
+
+		if (IsFree(Ideal))
+		{
+			return FBox2D(Ideal - Half, Ideal + Half);
+		}
+		FVector2D Best = Ideal;
+		double BestDistance = BIG_NUMBER;
+		const float Step = 10.f * Scale;
+		for (float Y = Low.Y; Y <= High.Y; Y += Step)
+		{
+			for (float X = Low.X; X <= High.X; X += Step)
+			{
+				const FVector2D Candidate(X, Y);
+				const double Distance = FVector2D::DistSquared(Candidate, Ideal);
+				if (Distance < BestDistance && IsFree(Candidate))
+				{
+					BestDistance = Distance;
+					Best = Candidate;
+				}
+			}
+		}
+		return FBox2D(Best - Half, Best + Half);
+	}
+
 	/** The help text: up to two short lines. */
 	struct FHintText
 	{
@@ -202,8 +342,11 @@ namespace CrabHud
 		FString Second;
 	};
 
-	/** All the controls for the first minute of a round, then one short line for what the crab is doing. None while the results panel is up. */
-	inline FHintText HintText(float RoundSeconds, bool bInBurrow, bool bMolting, bool bRoundOver = false)
+	/**
+	 * All the controls for the first minute of a round, then one short line for what the crab is doing, and what to do
+	 * about a gull that is down and coming (bGullDown). None while the results panel is up.
+	 */
+	inline FHintText HintText(float RoundSeconds, bool bInBurrow, bool bMolting, bool bRoundOver = false, bool bGullDown = false)
 	{
 		if (bRoundOver)
 		{
@@ -219,7 +362,11 @@ namespace CrabHud
 		}
 		if (bInBurrow)
 		{
-			return {TEXT("Click elsewhere to come out."), FString()};
+			return {bGullDown ? TEXT("Gull outside. Stay in until it goes.") : TEXT("Click elsewhere to come out."), FString()};
+		}
+		if (bGullDown)
+		{
+			return {TEXT("Gull! Press BURROW, or dance."), FString()};
 		}
 		return {TEXT("Click: walk. Right click: dash."), FString()};
 	}

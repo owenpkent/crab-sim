@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CrabSimGameMode.h"
 #include "CrabBeach.h"
+#include "CrabGull.h"
 #include "CrabHUD.h"
 #include "CrabPawn.h"
 #include "CrabPlayerController.h"
@@ -40,6 +41,10 @@ void ACrabSimGameMode::BeginPlay()
 		RemoveTemplateFloor();
 		Beach = World->SpawnActor<ACrabBeach>(FVector::ZeroVector, FRotator::ZeroRotator);
 	}
+
+	// One gull to a world. It stays out of sight until the rules send it.
+	TActorIterator<ACrabGull> ExistingGull(World);
+	Gull = ExistingGull ? *ExistingGull : World->SpawnActor<ACrabGull>(FVector::ZeroVector, FRotator::ZeroRotator);
 
 	PlaceCrabsOnTheGround();
 }

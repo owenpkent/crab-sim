@@ -8,8 +8,8 @@
 /**
  * On-screen readout: a tide gauge with a marker for how high the crab is
  * standing, the crab's grip and food, its molts, a short message line, the FOOD,
- * BURROW, dig and molt buttons, a help panel, and the results panel once the round
- * is won. Drawn with the canvas, so it needs no assets. The buttons are only drawn
+ * BURROW, dig and molt buttons, a help panel, a "Gull!" banner with an arrow to the
+ * gull while one is coming, and the results panel once the round is over (won or eaten). Drawn with the canvas, so it needs no assets. The buttons are only drawn
  * here: the controller reads the click, using the same layout (CrabHudMath.h).
  */
 UCLASS()
@@ -33,6 +33,8 @@ private:
 	void DrawReasonLine(const FBox2D& Rect, const FString& Reason, float Scale);
 	void DrawMoltPips(const ACrabPawn& Crab, float Scale);
 	void DrawResults(const ACrabPawn& Crab, float Scale);
+	/** The banner and the arrow at the view's edge, while a gull is circling or down. Decorative: neither takes a click. */
+	void DrawGullWarning(const ACrabPawn& Crab, const class ACrabGull& Gull, float Scale);
 	void DrawMessage(const ACrabPawn& Crab, float Scale, const TArray<FString>& ShownReasons);
-	void DrawHints(const ACrabPawn& Crab, float Scale);
+	void DrawHints(const ACrabPawn& Crab, bool bGullDown, float Scale);
 };

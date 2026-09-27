@@ -389,3 +389,123 @@ bool FCrabHudEchoTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("nor for an empty message"), CrabHud::EchoesReason(FString(), TEXT("Molt needs a burrow")));
 	return true;
 }
+
+namespace UE::CrabSim::Tests::HudMath
+{
+	const FIntPoint GullViews[] = {FIntPoint(1280, 720), FIntPoint(1920, 1080), FIntPoint(1024, 768), FIntPoint(1366, 768), FIntPoint(2560, 1440), FIntPoint(3840, 2160), FIntPoint(1280, 800)};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudGullBannerTest, "CrabSim.Hud.TheGullBannerIsInViewAndClearOfEveryOtherElement", TestFlags)
+bool FCrabHudGullBannerTest::RunTest(const FString& Parameters)
+{
+	for (const FIntPoint& View : GullViews)
+	{
+		const FBox2D Banner = CrabHud::GullBannerRect(View.X, View.Y);
+		const FString At = FString::Printf(TEXT("at %dx%d"), View.X, View.Y);
+		TestTrue(*(At + TEXT(" the banner is inside the view")), Banner.Min.X >= 0.f && Banner.Min.Y >= 0.f && Banner.Max.X <= View.X && Banner.Max.Y <= View.Y);
+		TestTrue(*(At + TEXT(" and in the top left corner, over the tide gauge")), Banner.Min.X < View.X * 0.05f && Banner.Min.Y < View.Y * 0.02f
+			&& Banner.Max.Y < CrabHud::TideGaugeRect(View.X, View.Y).Min.Y);
+		TestTrue(*(At + TEXT(" and big enough to read: 300 px wide, 40 tall at least")), Banner.GetSize().X >= 300.f && Banner.GetSize().Y >= 40.f);
+		int32 Hit = 0;
+		for (const FBox2D& Zone : CrabHud::GullKeepClearZones(View.X, View.Y))
+		{
+			Hit += Zone.Intersect(Banner) ? 1 : 0;
+		}
+		TestEqual(*(At + TEXT(" it overlaps no gauge, bar, pip, button, help line or message")), Hit, 0);
+
+		const FBox2D Gauge = CrabHud::TideGaugeRect(View.X, View.Y);
+		const FBox2D Message(FVector2D(View.X * 0.5f - 200.f, View.Y * 0.12f - 8.f), FVector2D(View.X * 0.5f + 200.f, View.Y * 0.12f + 40.f));
+		TestFalse(*(At + TEXT(" not the tide gauge")), Banner.Intersect(Gauge));
+		TestFalse(*(At + TEXT(" not where the message line is drawn")), Banner.Intersect(Message));
+		TestTrue(*(At + TEXT(" and short of the middle, so the gull's approach from ahead is not hidden")), Banner.Max.X < View.X * 0.45f);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudGullDirectionTest, "CrabSim.Hud.TheGullArrowPointsTheWayTheGullIsOnScreen", TestFlags)
+bool FCrabHudGullDirectionTest::RunTest(const FString& Parameters)
+{
+	const FVector2D Crab(100.0, -50.0);
+	auto Points = [&](const FVector2D& Offset, const FVector2D& Expected)
+	{
+		return CrabHud::GullArrowDirection(Crab, Crab + Offset).Equals(Expected, 1e-3);
+	};
+	TestTrue(TEXT("a gull toward the sea (+X) is up the screen"), Points(FVector2D(900.0, 0.0), FVector2D(0.0, -1.0)));
+	TestTrue(TEXT("toward the dunes (-X) is down"), Points(FVector2D(-900.0, 0.0), FVector2D(0.0, 1.0)));
+	TestTrue(TEXT("to the crab's right (+Y) is right"), Points(FVector2D(0.0, 900.0), FVector2D(1.0, 0.0)));
+	TestTrue(TEXT("to its left is left"), Points(FVector2D(0.0, -900.0), FVector2D(-1.0, 0.0)));
+	TestTrue(TEXT("a gull on the crab: up, not a blank"), Points(FVector2D::ZeroVector, FVector2D(0.0, -1.0)));
+
+	const FVector2D Diagonal = CrabHud::GullArrowDirection(Crab, Crab + FVector2D(1000.0, 1000.0));
+	TestNearlyEqual(TEXT("always a unit vector"), static_cast<float>(Diagonal.Size()), 1.f, 1e-4f);
+	TestTrue(TEXT("up and right for a gull ahead and to the right"), Diagonal.X > 0.0 && Diagonal.Y < 0.0);
+	TestTrue(TEXT("and flatter than 45 degrees: the ground is foreshortened on screen"), FMath::Abs(Diagonal.Y) < FMath::Abs(Diagonal.X));
+	TestNearlyEqual(TEXT("by the foreshortening"), static_cast<float>(-Diagonal.Y / Diagonal.X), CrabHud::GroundForeshortening, 1e-4f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudGullArrowTest, "CrabSim.Hud.TheGullArrowKeepsClearOfTheHudWhicheverWayTheGullIs", TestFlags)
+bool FCrabHudGullArrowTest::RunTest(const FString& Parameters)
+{
+	for (const FIntPoint& View : GullViews)
+	{
+		const TArray<FBox2D> Zones = CrabHud::GullKeepClearZones(View.X, View.Y);
+		const FBox2D Banner = CrabHud::GullBannerRect(View.X, View.Y);
+		int32 Overlaps = 0;
+		int32 Outside = 0;
+		for (int32 Degrees = 0; Degrees < 360; Degrees += 3)
+		{
+			const double Angle = FMath::DegreesToRadians(static_cast<double>(Degrees));
+			const FVector2D Direction(FMath::Cos(Angle), FMath::Sin(Angle));
+			const FBox2D Box = CrabHud::GullArrowBox(View.X, View.Y, Direction);
+			Outside += (Box.Min.X < 0.f || Box.Min.Y < 0.f || Box.Max.X > View.X || Box.Max.Y > View.Y) ? 1 : 0;
+			Overlaps += Box.Intersect(Banner) ? 1 : 0;
+			for (const FBox2D& Zone : Zones)
+			{
+				Overlaps += Zone.Intersect(Box) ? 1 : 0;
+			}
+		}
+		TestEqual(*FString::Printf(TEXT("at %dx%d the arrow is always in the view"), View.X, View.Y), Outside, 0);
+		TestEqual(*FString::Printf(TEXT("at %dx%d it never overlaps the banner, the tide gauge, the bars, pips, buttons, help line or message"), View.X, View.Y), Overlaps, 0);
+	}
+
+	// It sits on the side of the view the gull is on, where there is room.
+	const FBox2D Right = CrabHud::GullArrowBox(1280, 720, FVector2D(1.0, 0.0));
+	TestTrue(TEXT("a gull to the right: the arrow is in the right half"), Right.GetCenter().X > 640.0);
+	const FBox2D Left = CrabHud::GullArrowBox(1280, 720, FVector2D(-1.0, 0.0));
+	TestTrue(TEXT("to the left: the left half"), Left.GetCenter().X < 640.0);
+	const FBox2D Up = CrabHud::GullArrowBox(1280, 720, FVector2D(0.0, -1.0));
+	TestTrue(TEXT("ahead, up the screen: the upper half"), Up.GetCenter().Y < 360.0);
+	const FBox2D UpRight = CrabHud::GullArrowBox(1280, 720, FVector2D(0.7071, -0.7071));
+	TestTrue(TEXT("ahead and right: the upper right"), UpRight.GetCenter().X > 640.0 && UpRight.GetCenter().Y < 360.0);
+	TestTrue(TEXT("the arrow's box is big: 100 px wide and tall at least"), Right.GetSize().X >= 100.f && Right.GetSize().Y >= 100.f);
+
+	// A gull on screen is kept clear of: the arrow moves off it, and still keeps clear of everything else.
+	const FVector2D Direction(0.0, -1.0);
+	const FBox2D Free = CrabHud::GullArrowBox(1280, 720, Direction);
+	const TArray<FBox2D> Gull = {FBox2D(Free.GetCenter() - FVector2D(100.0, 100.0), Free.GetCenter() + FVector2D(100.0, 100.0))};
+	const FBox2D Moved = CrabHud::GullArrowBox(1280, 720, Direction, Gull);
+	TestFalse(TEXT("an arrow that would sit on the gull sits beside it instead"), Moved.Intersect(Gull[0]));
+	int32 Hit = 0;
+	for (const FBox2D& Zone : CrabHud::GullKeepClearZones(1280, 720))
+	{
+		Hit += Zone.Intersect(Moved) ? 1 : 0;
+	}
+	TestEqual(TEXT("and clear of the HUD"), Hit, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudGullHintTest, "CrabSim.Hud.TheHelpLineTellsWhatToDoAboutAGull", TestFlags)
+bool FCrabHudGullHintTest::RunTest(const FString& Parameters)
+{
+	const CrabHud::FHintText Out = CrabHud::HintText(120.f, false, false, false, true);
+	TestTrue(TEXT("out in the open it says the answers: BURROW, or dance"), Out.First.Contains(TEXT("BURROW")) && Out.First.Contains(TEXT("dance")));
+	const CrabHud::FHintText In = CrabHud::HintText(120.f, true, false, false, true);
+	TestTrue(TEXT("dug in with the gull down it says to stay"), In.First.Contains(TEXT("Stay")));
+	TestTrue(TEXT("both fit the help panel (40 letters)"), Out.First.Len() <= 40 && In.First.Len() <= 40);
+	TestTrue(TEXT("no gull down, the old lines"), CrabHud::HintText(120.f, true, false, false, false).First.Contains(TEXT("come out")));
+	TestTrue(TEXT("molting comes first"), CrabHud::HintText(120.f, true, true, false, true).First.Contains(TEXT("cancel")));
+	TestTrue(TEXT("the results panel beats it"), CrabHud::HintText(120.f, false, false, true, true).First.IsEmpty());
+	TestTrue(TEXT("the first minute's full help is kept"), CrabHud::HintText(10.f, false, false, false, true).Second == CrabHud::HintText(10.f, false, false).Second);
+	return true;
+}

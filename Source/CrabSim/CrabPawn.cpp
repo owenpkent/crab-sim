@@ -1035,6 +1035,30 @@ void ACrabPawn::WinRound()
 		RoundSeconds, Molts, RoundDug, RoundFoodEaten, BestSeconds));
 }
 
+void ACrabPawn::EatenByGull()
+{
+	if (bRoundOver)
+	{
+		return;
+	}
+	bRoundOver = true;
+	bEaten = true;
+	bNewBest = false;
+	StopDance();
+	StopFeeding();
+	CancelDig(TEXT("eaten"));
+	CancelMolt(TEXT("eaten"));
+	ClearMoveTarget();
+	DashTimeRemaining = 0.f;
+	GetCharacterMovement()->StopMovementImmediately();
+	if (ACrabBeach* Beach = GetBeach())
+	{
+		Beach->SetTideFrozen(true);
+	}
+	LogEvent(TEXT("round_eaten"), FString::Printf(TEXT("time=%.1f molts=%d dug=%d eaten=%.3f best=%.1f"),
+		RoundSeconds, Molts, RoundDug, RoundFoodEaten, BestSeconds));
+}
+
 void ACrabPawn::StartNewRound()
 {
 	ACrabBeach* Beach = GetBeach();
@@ -1049,6 +1073,8 @@ void ACrabPawn::StartNewRound()
 
 	bRoundOver = false;
 	bNewBest = false;
+	bEaten = false;
+	++RoundIndex;
 	RoundSeconds = 0.f;
 	RoundDug = 0;
 	RoundFoodEaten = 0.f;
@@ -1097,6 +1123,11 @@ void ACrabPawn::ApplyTestFood()
 }
 
 // --- Survival ---------------------------------------------------------------------
+
+float ACrabPawn::GetGroundSpeed() const
+{
+	return GetCharacterMovement()->Velocity.Size2D();
+}
 
 void ACrabPawn::SetGrip(float NewGrip)
 {
@@ -1436,11 +1467,11 @@ void ACrabPawn::LogState() const
 	const FString Target = bHasTarget ? FString::Printf(TEXT("%.1f,%.1f"), MoveTarget.X, MoveTarget.Y) : FString(TEXT("none"));
 	const ACrabBeach* Beach = GetBeach();
 	// The live test parses everything up to dash=. New fields go after it.
-	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d molts=%d molt=%.2f soft=%.1f over=%d scale=%.3f"),
+	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d molts=%d molt=%.2f soft=%.1f over=%d scale=%.3f eaten=%d"),
 		GetWorld()->GetTimeSeconds(), Location.X, Location.Y, Location.Z,
 		FRotator::NormalizeAxis(GetActorRotation().Yaw), GetCharacterMovement()->Velocity.Size2D(), *Target, IsDashing() ? 1 : 0,
 		Grip, WaterDepth, Beach ? Beach->GetSurfaceLevel() : 0.f, Beach ? Beach->GetTideFraction() : 0.f,
 		CurrentBurrow, bDancing ? 1 : 0, AnimName(AnimState), bUseSkeletalMesh ? 1 : 0, SweptCount,
 		Food, FeedingPatch, GetDigProgress(), Beach ? Beach->GetDugBurrowCount() : 0,
-		Molts, GetMoltProgress(), SoftRemaining, bRoundOver ? 1 : 0, ShownGrowth);
+		Molts, GetMoltProgress(), SoftRemaining, bRoundOver ? 1 : 0, ShownGrowth, bEaten ? 1 : 0);
 }

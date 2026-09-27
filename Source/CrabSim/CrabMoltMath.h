@@ -131,4 +131,10 @@ namespace CrabMolt
 		const int32 Whole = FMath::Max(FMath::FloorToInt(Seconds), 0);
 		return FString::Printf(TEXT("%d:%02d"), Whole / 60, Whole % 60);
 	}
+
+	/** The best time for the results panel: a time, or "none yet" before the first fully grown round. */
+	inline FString BestText(float Best)
+	{
+		return Best <= 0.f ? FString(TEXT("none yet")) : TimeText(Best);
+	}
 }

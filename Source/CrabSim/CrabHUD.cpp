@@ -3,12 +3,15 @@
 #include "CrabBeach.h"
 #include "CrabDigMath.h"
 #include "CrabGotoMath.h"
+#include "CrabGull.h"
 #include "CrabHudMath.h"
 #include "CrabMoltMath.h"
 #include "CrabPawn.h"
 
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
 
 namespace
 {
@@ -35,6 +38,11 @@ namespace
 	const FLinearColor NewRoundFill = FLinearColor(0.55f, 0.8f, 0.2f, 0.98f);
 	const FLinearColor ButtonInk = FLinearColor(0.05f, 0.04f, 0.02f, 1.f);
 	const FLinearColor Border = FLinearColor(0.f, 0.f, 0.f, 0.6f);
+	const FLinearColor GullFill = FLinearColor(0.5f, 0.07f, 0.05f, 0.92f);
+	const FLinearColor GullInk = FLinearColor(1.f, 0.95f, 0.85f, 1.f);
+	const FLinearColor GullArrow = FLinearColor(1.f, 0.78f, 0.15f, 1.f);
+	const FLinearColor GullArrowOutline = FLinearColor(0.f, 0.f, 0.f, 0.85f);
+	const FLinearColor EatenAccent = FLinearColor(0.92f, 0.5f, 0.4f, 1.f);
 }
 
 void ACrabHUD::DrawHUD()
@@ -66,7 +74,17 @@ void ACrabHUD::DrawHUD()
 		ShownReasons.Add(DrawBurrowButton(*Crab, Scale));
 	}
 	DrawMessage(*Crab, Scale, ShownReasons);
-	DrawHints(*Crab, Scale);
+	const ACrabGull* Gull = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		TActorIterator<ACrabGull> It(World);
+		Gull = It ? *It : nullptr;
+	}
+	if (Gull && Gull->IsWarned() && !Crab->IsRoundOver())
+	{
+		DrawGullWarning(*Crab, *Gull, Scale);
+	}
+	DrawHints(*Crab, Gull && CrabGull::IsThreat(Gull->GetPhase()), Scale);
 	if (Crab->IsRoundOver())
 	{
 		DrawResults(*Crab, Scale);
@@ -330,19 +348,29 @@ void ACrabHUD::DrawResults(const ACrabPawn& Crab, float Scale)
 	const FBox2D PanelRect = CrabHud::ResultsPanelRect(ViewW, ViewH);
 	const FVector2D PanelSize = PanelRect.GetSize();
 	const float Edge = 4.f * Scale;
-	DrawRect(Gold, PanelRect.Min.X - Edge, PanelRect.Min.Y - Edge, PanelSize.X + 2.f * Edge, PanelSize.Y + 2.f * Edge);
+	const bool bEaten = Crab.IsEaten();
+	const FLinearColor& Accent = bEaten ? EatenAccent : Gold;
+	DrawRect(Accent, PanelRect.Min.X - Edge, PanelRect.Min.Y - Edge, PanelSize.X + 2.f * Edge, PanelSize.Y + 2.f * Edge);
 	DrawRect(FLinearColor(0.04f, 0.06f, 0.08f, 0.94f), PanelRect.Min.X, PanelRect.Min.Y, PanelSize.X, PanelSize.Y);
 
+	const FString Title = bEaten ? TEXT("Eaten by a gull") : TEXT("Fully grown!");
 	float TitleW = 0.f;
 	float TitleH = 0.f;
-	GetTextSize(TEXT("Fully grown!"), TitleW, TitleH, Font, Scale * 2.6f);
-	DrawText(TEXT("Fully grown!"), Gold, PanelRect.Min.X + (PanelSize.X - TitleW) * 0.5f, PanelRect.Min.Y + 22.f * Scale, Font, Scale * 2.6f);
+	GetTextSize(Title, TitleW, TitleH, Font, Scale * 2.6f);
+	DrawText(Title, Accent, PanelRect.Min.X + (PanelSize.X - TitleW) * 0.5f, PanelRect.Min.Y + 22.f * Scale, Font, Scale * 2.6f);
+	if (bEaten)
+	{
+		float NoteW = 0.f;
+		float NoteH = 0.f;
+		GetTextSize(TEXT("The gull is unbothered."), NoteW, NoteH, Font, Scale);
+		DrawText(TEXT("The gull is unbothered."), TextDim, PanelRect.Min.X + (PanelSize.X - NoteW) * 0.5f, PanelRect.Min.Y + 76.f * Scale, Font, Scale);
+	}
 
 	struct FRow { FString Label; FString Value; FLinearColor Colour; };
 	TArray<FRow> Rows;
 	Rows.Add({TEXT("Time"), CrabMolt::TimeText(Crab.GetRoundSeconds()), Text});
-	Rows.Add({TEXT("Best time"), CrabMolt::TimeText(Crab.GetBestSeconds()) + (Crab.IsNewBest() ? TEXT("  NEW BEST") : TEXT("")), Crab.IsNewBest() ? Gold : Text});
-	Rows.Add({TEXT("Molts"), FString::Printf(TEXT("%d"), Crab.GetMolts()), Text});
+	Rows.Add({TEXT("Best time"), CrabMolt::BestText(Crab.GetBestSeconds()) + (Crab.IsNewBest() ? TEXT("  NEW BEST") : TEXT("")), Crab.IsNewBest() ? Gold : Text});
+	Rows.Add({bEaten ? TEXT("Molts so far") : TEXT("Molts"), FString::Printf(TEXT("%d"), Crab.GetMolts()), Text});
 	Rows.Add({TEXT("Burrows dug"), FString::Printf(TEXT("%d"), Crab.GetRoundDug()), Text});
 	Rows.Add({TEXT("Food eaten"), FString::Printf(TEXT("%.1f"), Crab.GetRoundFoodEaten()), Text});
 	for (int32 Index = 0; Index < Rows.Num(); ++Index)
@@ -390,10 +418,10 @@ void ACrabHUD::DrawMessage(const ACrabPawn& Crab, float Scale, const TArray<FStr
 	DrawText(Crab.GetMessage(), FLinearColor(1.f, 1.f, 1.f, Alpha), X, Y, Font, Scale * 1.3f);
 }
 
-void ACrabHUD::DrawHints(const ACrabPawn& Crab, float Scale)
+void ACrabHUD::DrawHints(const ACrabPawn& Crab, bool bGullDown, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
-	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting(), Crab.IsRoundOver());
+	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting(), Crab.IsRoundOver(), bGullDown);
 	if (Hint.First.IsEmpty())
 	{
 		return;
@@ -443,4 +471,75 @@ void ACrabHUD::DrawHints(const ACrabPawn& Crab, float Scale)
 	{
 		DrawText(Lines[Index], HintInk, Room.Min.X + Pad, Top + Pad * 0.6f + Index * (LineH + Gap), Font, TextScale);
 	}
+}
+
+void ACrabHUD::DrawGullWarning(const ACrabPawn& Crab, const ACrabGull& Gull, float Scale)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	const float ViewW = Canvas->SizeX;
+	const float ViewH = Canvas->SizeY;
+
+	// The banner: "Gull!" and what it is doing, top middle.
+	const FBox2D Banner = CrabHud::GullBannerRect(ViewW, ViewH);
+	const FVector2D BannerSize = Banner.GetSize();
+	const float Edge = 3.f * Scale;
+	DrawRect(Border, Banner.Min.X - Edge, Banner.Min.Y - Edge, BannerSize.X + 2.f * Edge, BannerSize.Y + 2.f * Edge);
+	DrawRect(GullFill, Banner.Min.X, Banner.Min.Y, BannerSize.X, BannerSize.Y);
+	const FString Line = CrabGull::BannerText(Gull.GetPhase());
+	float TitleW = 0.f;
+	float TitleH = 0.f;
+	float LineW = 0.f;
+	float LineH = 0.f;
+	GetTextSize(TEXT("Gull!"), TitleW, TitleH, Font, Scale * 2.f);
+	GetTextSize(Line, LineW, LineH, Font, Scale * 1.05f);
+	const float Top = Banner.Min.Y + (BannerSize.Y - TitleH - LineH) * 0.5f;
+	DrawText(TEXT("Gull!"), GullInk, Banner.Min.X + (BannerSize.X - TitleW) * 0.5f, Top, Font, Scale * 2.f);
+	DrawText(Line, GullInk, Banner.Min.X + (BannerSize.X - LineW) * 0.5f, Top + TitleH, Font, Scale * 1.05f);
+
+	// The arrow: at the edge of the view, toward the gull, with how far it is under it. Not a button.
+	const FVector Where = Crab.GetActorLocation();
+	FVector2D Direction = CrabHud::GullArrowDirection(FVector2D(Where.X, Where.Y), Gull.GetGroundLocation());
+	// A gull that is on screen is kept clear of, and the arrow points at it from where it sits.
+	const FVector Seen = Project(Gull.GetActorLocation() + FVector(0.f, 0.f, 60.f));
+	const bool bOnScreen = Seen.Z > 0.f && Seen.X > 0.f && Seen.X < ViewW && Seen.Y > 0.f && Seen.Y < ViewH;
+	TArray<FBox2D> Extra;
+	if (bOnScreen)
+	{
+		const FVector2D Half(120.f * Scale, 100.f * Scale);
+		Extra.Add(FBox2D(FVector2D(Seen.X, Seen.Y) - Half, FVector2D(Seen.X, Seen.Y) + Half));
+	}
+	const FBox2D Box = CrabHud::GullArrowBox(ViewW, ViewH, Direction, Extra);
+	if (bOnScreen)
+	{
+		FVector2D Toward = FVector2D(Seen.X, Seen.Y) - Box.GetCenter();
+		if (Toward.Normalize())
+		{
+			Direction = Toward;
+		}
+	}
+	const FVector2D Sideways(-Direction.Y, Direction.X);
+	const FVector2D Middle = Box.GetCenter() - FVector2D(0.f, 8.f * Scale);
+	const FVector2D Tip = Middle + Direction * (34.f * Scale);
+	const FVector2D Tail = Middle - Direction * (30.f * Scale);
+	const FVector2D WingA = Tip - Direction * (28.f * Scale) + Sideways * (26.f * Scale);
+	const FVector2D WingB = Tip - Direction * (28.f * Scale) - Sideways * (26.f * Scale);
+	auto Stroke = [this](const FVector2D& From, const FVector2D& To, const FLinearColor& Colour, float Width)
+	{
+		DrawLine(From.X, From.Y, To.X, To.Y, Colour, Width);
+	};
+	for (int32 Pass = 0; Pass < 2; ++Pass)
+	{
+		const FLinearColor& Colour = Pass == 0 ? GullArrowOutline : GullArrow;
+		const float Width = (Pass == 0 ? 24.f : 14.f) * Scale;
+		Stroke(Tail, Tip, Colour, Width);
+		Stroke(Tip, WingA, Colour, Width);
+		Stroke(Tip, WingB, Colour, Width);
+	}
+	const FString Distance = CrabGull::DistanceText(Gull.GetCrabDistance());
+	float DistanceW = 0.f;
+	float DistanceH = 0.f;
+	GetTextSize(Distance, DistanceW, DistanceH, Font, Scale * 1.1f);
+	const FVector2D TextAt(Box.GetCenter().X - DistanceW * 0.5f, Box.GetCenter().Y + 32.f * Scale);
+	DrawRect(Panel, TextAt.X - 6.f * Scale, TextAt.Y - 2.f * Scale, DistanceW + 12.f * Scale, DistanceH + 4.f * Scale);
+	DrawText(Distance, Text, TextAt.X, TextAt.Y, Font, Scale * 1.1f);
 }

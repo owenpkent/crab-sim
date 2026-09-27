@@ -6,10 +6,11 @@
 #include "CrabSimGameMode.generated.h"
 
 class ACrabBeach;
+class ACrabGull;
 
 /**
  * Sets the crab, its pointer controller and its HUD as project defaults, and
- * builds the beach when the level does not already have one.
+ * builds the beach when the level does not already have one. Puts the gull in the world.
  */
 UCLASS()
 class CRABSIM_API ACrabSimGameMode : public AGameModeBase
@@ -22,6 +23,7 @@ public:
 	virtual void BeginPlay() override;
 
 	ACrabBeach* GetBeach() const { return Beach; }
+	ACrabGull* GetGull() const { return Gull; }
 
 	/** Where the crab starts, world XY. The beach keeps rocks well clear of it. */
 	UPROPERTY(EditAnywhere, Category = "Crab")
@@ -34,4 +36,7 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<ACrabBeach> Beach;
+
+	UPROPERTY()
+	TObjectPtr<ACrabGull> Gull;
 };
