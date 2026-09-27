@@ -7,7 +7,8 @@
 /**
  * Which food patch or burrow the FOOD and BURROW buttons send the crab to, as pure functions. A press
  * is the same as clicking that patch or burrow. Both leave out what the sea would take before the crab
- * could use it, so one press is always worth making.
+ * could use it, so one press is always worth making. FOOD picks the best patch, not the nearest: how much
+ * it holds, cut down by the walk.
  */
 namespace CrabGoto
 {
@@ -23,6 +24,10 @@ namespace CrabGoto
 		static constexpr float SafeRange = 3500.f;
 		/** Burrow floors within this many uu of the highest count as level, and the nearer of them wins. */
 		static constexpr float FloorTie = 10.f;
+		/** A patch's worth is halved by a walk this long, uu: richness / (1 + distance / DistanceFalloff). */
+		static constexpr float DistanceFalloff = 1500.f;
+		/** A patch holding less than this is only picked when no richer one is usable. */
+		static constexpr float MinRichness = 0.25f;
 	};
 
 	/** What the rules need to know about a food patch. Distance is XY, from the crab to the middle. */
@@ -83,18 +88,33 @@ namespace CrabGoto
 		return !Burrow.bFlooded && Burrow.SecondsUntilFlooded >= ArrivalSeconds(Burrow.Distance) + Tuning::BurrowLeadSeconds;
 	}
 
-	/** The nearest usable patch (the lower index on a tie), or INDEX_NONE. */
+	/** What a patch is worth walking to: the richness it holds, cut down by the distance. */
+	inline float PatchScore(const FPatch& Patch)
+	{
+		return Patch.Richness / (1.f + FMath::Max(Patch.Distance, 0.f) / Tuning::DistanceFalloff);
+	}
+
+	/**
+	 * The best usable patch by PatchScore (the lower index on a tie), or INDEX_NONE. A patch holding less than
+	 * MinRichness is passed over unless no richer one is usable.
+	 */
 	inline int32 PickPatch(TArrayView<const FPatch> Patches)
 	{
 		int32 Best = INDEX_NONE;
+		int32 BestPoor = INDEX_NONE;
 		for (int32 Index = 0; Index < Patches.Num(); ++Index)
 		{
-			if (IsPatchUsable(Patches[Index]) && (Best == INDEX_NONE || Patches[Index].Distance < Patches[Best].Distance))
+			if (!IsPatchUsable(Patches[Index]))
 			{
-				Best = Index;
+				continue;
+			}
+			int32& Slot = Patches[Index].Richness >= Tuning::MinRichness ? Best : BestPoor;
+			if (Slot == INDEX_NONE || PatchScore(Patches[Index]) > PatchScore(Patches[Slot]))
+			{
+				Slot = Index;
 			}
 		}
-		return Best;
+		return Best != INDEX_NONE ? Best : BestPoor;
 	}
 
 	/**

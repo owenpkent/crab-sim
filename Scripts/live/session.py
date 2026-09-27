@@ -20,7 +20,7 @@ Usage: session.py <game log> <output dir> [game pid] [scenario]
   "molt" (click the molt button in the open and get refused, dig into a burrow, start a
   molt and leave to cancel it, dig in again, molt to the end; the tide is frozen at low
   water and CrabSim.FoodFloor keeps the crab fed) or "goto" (click the HUD's FOOD button
-  and feed at the nearest patch, click BURROW and dig in at the highest burrow, click
+  and feed at the best patch, click BURROW and dig in at the highest burrow, click
   BURROW again while dug in and get refused; the tide is frozen at low water).
 
 Time limits are in game seconds (the t= field), which run at real time. Each
@@ -112,12 +112,14 @@ MOLT_GROWTH = 1.08
 MOLT_GROWTH_TOL = 0.01
 MOLT_MAX_MOVE = 25.0         # uu the crab may drift while it molts, or while a refused click is made
 
-# goto (TideSpeed 0): the HUD's FOOD and BURROW buttons walk the crab to the nearest patch and the highest burrow
+# goto (TideSpeed 0): the HUD's FOOD and BURROW buttons walk the crab to the best patch and the highest burrow
 GOTO_EVENT_WINDOW = 1.5      # s from the click on FOOD or BURROW to goto_food, goto_burrow or goto_refused
 GOTO_WALK_WINDOW = 2.0       # s from the click on FOOD by which the crab is walking
 GOTO_WALK_SPEED = 100.0      # uu/s: a state with no target still counts as walking above this
 GOTO_FULL = 0.98             # food at which the buttons grey out, so the crab must start below it
-GOTO_PATCH_INDEX = 2         # patch2 (-350,-700), about 780 uu from the start at (0,0), is the nearest patch
+PATCH_RICHNESS = [0.40, 0.45, 0.60, 0.75, 0.80, 0.90, 1.00]   # what each patch holds when fresh
+GOTO_FALLOFF = 1500.0        # CrabGoto::Tuning::DistanceFalloff: a patch scores richness / (1 + distance / falloff)
+GOTO_PATCH_INDEX = 3         # patch3 (600,-650), about 885 uu from the start at (0,0), scores best, though patch2 is nearer
 GOTO_FEED_WINDOW = 20.0      # s from the click on FOOD to food_begin (that walk, and patch2 is off screen at the start)
 GOTO_BURROW_INDEX = 0        # burrow0, the highest floor, is the button's choice
 GOTO_BURROW_WINDOW = 30.0    # s from the click on BURROW to burrow_enter (burrow0 is about 3200 uu away)
@@ -253,6 +255,11 @@ def in_view(pixel, view, margin=VIEW_MARGIN):
     if pixel is None or pixel == (-1.0, -1.0):
         return False
     return margin <= pixel[0] <= view[0] - margin and margin <= pixel[1] <= view[1] - margin
+
+
+def patch_score(here, index):
+    """What the FOOD button thinks patch `index` is worth to a crab at `here`: richness over (1 + distance / falloff)."""
+    return PATCH_RICHNESS[index] / (1.0 + dist_xy(here, PATCH_CENTRES[index]) / GOTO_FALLOFF)
 
 
 def centre_of(centres, index, fallback):
@@ -1060,11 +1067,12 @@ class Run:
         chosen = None if chosen is None else int(chosen)
         self.note("goto_food: %s" % went.rest)
         here = mark.state
-        nearest = None if here is None else min(range(len(PATCH_CENTRES)), key=lambda i: dist_xy(here, PATCH_CENTRES[i]))
+        best = None if here is None else max(range(len(PATCH_CENTRES)), key=lambda i: patch_score(here, i))
         self.check(chosen == GOTO_PATCH_INDEX, "the button chose patch%d: goto_food says patch=%s"
                    % (GOTO_PATCH_INDEX, chosen))
-        self.check(chosen is not None and chosen == nearest, "and that is the nearest patch to the crab at the click: "
-                   "patch%s is %s uu away" % (nearest, "?" if nearest is None else "%.0f" % dist_xy(here, PATCH_CENTRES[nearest])))
+        self.check(chosen is not None and chosen == best, "and that is the best patch for the crab at the click (richness over distance): "
+                   "patch%s scores %s, %s uu away" % (best, "?" if best is None else "%.3f" % patch_score(here, best),
+                                                    "?" if best is None else "%.0f" % dist_xy(here, PATCH_CENTRES[best])))
         self.expect_state(mark, lambda s: s.target is not None or s.speed > GOTO_WALK_SPEED, GOTO_WALK_WINDOW,
                           "the crab starts walking (a target, or speed > %.0f)" % GOTO_WALK_SPEED)
         begin = self.expect_event(mark, "food_begin", GOTO_FEED_WINDOW, "the crab walks to the patch: food_begin event")

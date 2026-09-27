@@ -89,16 +89,18 @@ the tide gauge, the food bar, the molts pips, the grip bar, MOLT, DIG and the he
 that column and MOLT and DIG, for their reason lines. A press on either is only ever a press on the button: it never
 also walks the crab to the ground behind it, and holding on it does not follow.
 
-- FOOD: the same as clicking the nearest food patch that has richness left, is not under water (over 10 cm, the soak
+- FOOD: the same as clicking the best food patch that has richness left, is not under water (over 10 cm, the soak
   depth) and will not be soaked before the crab could get there and feed for 8 s (the walk is timed at 350 uu/s, under
-  its side speed). The nearest, not the richest: it is for one click when the food is off screen. Out of a burrow it
-  comes out first. Greyed, with a line above it, when there is none ("No dry food left") or the crab is full ("Not
-  hungry").
+  its side speed). The best, not the nearest: a patch scores its richness over (1 + distance / 1500 uu), so a rich
+  patch a walk away beats a poor one at hand, and a patch holding under 0.25 is passed over unless nothing richer is
+  usable. It is for one click when the food is off screen. Out of a burrow it comes out first. Greyed, with a line
+  above it, when there is none ("No dry food left") or the crab is full ("Not hungry").
 - BURROW: the same as clicking the safest burrow the crab can reach: of the burrows that are not flooded and stay dry
   until the crab is in (3 s to spare) and within 3500 uu, the one with the highest floor (floors within 10 uu count as
   level, and the nearer wins), otherwise the nearest dry one at any distance. Greyed ("Already dug in") when the crab
   is in a burrow, and ("No dry burrow near") when none is dry.
-- Each shows what it does under its name ("nearest patch", "safest burrow"). The rules are in `CrabGotoMath.h`.
+- Each shows what it does under its name ("best patch", "safest burrow"). The rules are in `CrabGotoMath.h`, and the
+  two numbers that shape the FOOD pick (`DistanceFalloff`, `MinRichness`) are in `CrabGoto::Tuning`.
 
 A burrow or patch is easy to click at any camera range. Its click zone is its world radius (burrow 100 uu, patch
 200 uu) or an ellipse on screen at least 90 px wide and 60 px tall at 720p (it grows with the window), whichever is
@@ -133,8 +135,9 @@ and food is never the only limit. A molt is 0.80 food, about half a minute of si
 undisturbed seconds in a burrow that will not flood. The first low water is not enough for one. The crab starts at
 0.25, the low, rich patches are under water about 25 s in, and the poor high ones (0.40 and 0.45) hold little: a full
 round played by a bot peaked at food 0.735 in the first low water. A patch only refills once the sea has soaked it
-and left, so the first molt comes in the first tide cycle after the high water, about 200 s in (198 s in that
-playtest), and then about one a tide (389 s and 570 s there). In between the water takes the flats and floods the low
+and left, so the first molt comes in the first tide cycle after the high water, about 200 s in (227 s in the latest
+playtest), and then about one a tide (417 s and 596 s there, a round of 9:56 with the FOOD button choosing the best
+patch; when it chose the nearest, poor patches and bare ones stretched the same bot's round to 14:41). In between the water takes the flats and floods the low
 burrows, the crab has to sit out the high tide in a high one, and the next molts wait for the flats to come back.
 Burrow choice is the game: a low burrow next to the food is a gamble (it floods first), a high one is safe but a long
 walk from the food, and a molt that the sea interrupts leaves the crab soft. Every number that sets the pace is in one
@@ -168,7 +171,7 @@ Pointer-first. Nothing requires a key, the wheel, or a timing window.
 - Hold left: walk toward the cursor and keep following it.
 - Left click a burrow: walk there and dig in. Click your own hole to stay in, click elsewhere to come out.
 - Left click a food patch: walk there and feed until it is bare, the crab is full, or you send it elsewhere.
-- Left click the HUD's FOOD button: the same, for the nearest patch worth the walk. It needs no aim and works when
+- Left click the HUD's FOOD button: the same, for the best patch (rich, not too far). It needs no aim and works when
   the patch is off screen. BURROW: the same, for the safest burrow. Big targets, left of MOLT and DIG.
 - Burrows and patches are ellipses at least 90 by 60 px on screen at any camera range, as well as their world radius.
 - Left click the HUD's dig button: dig a new burrow where the crab stands. A big target, no key, no timing.
@@ -181,7 +184,7 @@ Pointer-first. Nothing requires a key, the wheel, or a timing window.
 - The help is a dark panel, bottom left, in two lines at least 16 px tall ("Click: walk. Hold: follow." and
   "Right click: dash. Click crab: dance."). After the first minute of a round it gives way to one short hint for what
   the crab is doing ("Click elsewhere to come out.", "Molting. Click elsewhere to cancel." or "Click: walk. Right
-  click: dash."). It stays clear of the grip and food bars and the molts pips.
+  click: dash."). It stays clear of the grip and food bars and the molts pips, and is not shown while the results panel is up.
 
 The dash is on the right button, not a drag, because a held left button already means "follow the cursor".
 Drag and hold are the same gesture there. Pinch is not built yet and will get a button that is not left click.

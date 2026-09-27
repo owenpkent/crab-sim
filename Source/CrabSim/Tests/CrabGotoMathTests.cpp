@@ -25,14 +25,44 @@ namespace UE::CrabSim::Tests::GotoMath
 
 using namespace UE::CrabSim::Tests::GotoMath;
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabGotoPatchNearestTest, "CrabSim.Goto.TheFoodButtonPicksTheNearestPatch", TestFlags)
-bool FCrabGotoPatchNearestTest::RunTest(const FString& Parameters)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabGotoPatchBestTest, "CrabSim.Goto.TheFoodButtonPicksTheBestPatchNotTheNearest", TestFlags)
+bool FCrabGotoPatchBestTest::RunTest(const FString& Parameters)
 {
+	TestNearlyEqual(TEXT("a patch at the crab's feet is worth its richness"), CrabGoto::PatchScore(Patch(0.f, 0.6f)), 0.6f, 1e-5f);
+	TestNearlyEqual(TEXT("one falloff away, half of it"), CrabGoto::PatchScore(Patch(CrabGoto::Tuning::DistanceFalloff, 1.f)), 0.5f, 1e-5f);
+	TestTrue(TEXT("a richer patch scores higher at the same distance"), CrabGoto::PatchScore(Patch(800.f, 0.9f)) > CrabGoto::PatchScore(Patch(800.f, 0.5f)));
+	TestTrue(TEXT("a nearer patch scores higher at the same richness"), CrabGoto::PatchScore(Patch(300.f, 0.7f)) > CrabGoto::PatchScore(Patch(900.f, 0.7f)));
+
 	const TArray<CrabGoto::FPatch> Patches = {Patch(900.f), Patch(300.f), Patch(600.f)};
-	TestEqual(TEXT("the nearest of three"), CrabGoto::PickPatch(Patches), 1);
+	TestEqual(TEXT("equally rich: the nearest of three"), CrabGoto::PickPatch(Patches), 1);
 	TestEqual(TEXT("with one patch, that one"), CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(2500.f)}), 0);
-	TestEqual(TEXT("the richest is not what it looks for: a poor near patch beats a rich far one"),
-		CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(1500.f, 1.f), Patch(400.f, 0.4f)}), 1);
+	TestEqual(TEXT("a rich patch a walk away beats a poor near one"),
+		CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(1500.f, 1.f), Patch(400.f, 0.4f)}), 0);
+	TestEqual(TEXT("but not a slightly richer one three times as far"),
+		CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(3000.f, 0.9f), Patch(600.f, 0.7f)}), 1);
+	TestEqual(TEXT("the score is what decides: the middle one of three"),
+		CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(2000.f, 1.f), Patch(1100.f, 0.9f), Patch(500.f, 0.45f)}), 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabGotoPatchThinTest, "CrabSim.Goto.ThinPatchesAreSkippedUnlessNothingRicherIsUsable", TestFlags)
+bool FCrabGotoPatchThinTest::RunTest(const FString& Parameters)
+{
+	const float Thin = CrabGoto::Tuning::MinRichness - 0.05f;
+	TestTrue(TEXT("the thin one scores higher, so the skip is what decides"),
+		CrabGoto::PatchScore(Patch(200.f, Thin)) > CrabGoto::PatchScore(Patch(4000.f, 0.5f)));
+	TestEqual(TEXT("a thin near patch is passed over for a rich far one"),
+		CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(200.f, Thin), Patch(4000.f, 0.5f)}), 1);
+	TestEqual(TEXT("a patch at the minimum counts as rich enough"),
+		CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(100.f, Thin), Patch(3000.f, CrabGoto::Tuning::MinRichness)}), 1);
+	TestEqual(TEXT("with nothing richer, the best of the thin ones"),
+		CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(1500.f, Thin), Patch(300.f, 0.1f), Patch(200.f, Thin)}), 2);
+	TestEqual(TEXT("a lone thin patch is still a pick"), CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Patch(800.f, 0.1f)}), 0);
+
+	CrabGoto::FPatch ThinUnder = Patch(100.f, Thin);
+	ThinUnder.WaterDepth = CrabFood::SoakDepth + 5.f;
+	TestEqual(TEXT("a thin patch that is under water is not the fallback either"),
+		CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{ThinUnder, Patch(3000.f, 0.1f)}), 1);
 	return true;
 }
 
@@ -58,6 +88,9 @@ bool FCrabGotoPatchSkipTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("a bare patch is skipped for a far one"), CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Bare, Far}), 1);
 	TestEqual(TEXT("so is one that only counts as bare"), CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Nearly, Far}), 1);
 	TestEqual(TEXT("a submerged one is skipped"), CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Under, Far}), 1);
+	CrabGoto::FPatch Richest = Patch(100.f, 1.f);
+	Richest.WaterDepth = CrabFood::SoakDepth + 5.f;
+	TestEqual(TEXT("even the best scorer is skipped when it is under water"), CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Richest, Far}), 1);
 	TestEqual(TEXT("a damp one under the soak depth is not"), CrabGoto::PickPatch(TArray<CrabGoto::FPatch>{Damp, Far}), 0);
 
 	// 100 uu is under a second's walk. The sea must stay off it that long, plus the lead the crab wants to feed.

@@ -17,8 +17,8 @@ The policy, in the order it is checked each tick (a quarter of a second):
   6. In a burrow with nothing to do: wait. Come out when a patch is reachable again, that is, when the water has fallen.
 
 A patch or burrow is clicked where it is on screen. One the camera cannot show (or that sits under a HUD button) is
-reached with the HUD's FOOD or BURROW button instead: one click walks the crab to the game's own choice (the nearest
-usable patch, the safest reachable burrow), and the bot adopts that choice as its goal. A hop toward the target is the
+reached with the HUD's FOOD or BURROW button instead: one click walks the crab to the game's own choice (the best
+usable patch, richness over distance, and the safest reachable burrow), and the bot adopts that choice as its goal. A hop toward the target is the
 fallback, for when the button is greyed (the crab is full, or already in a burrow) or refuses.
 
 Clicks are left clicks on a food patch, a burrow, the HUD's FOOD or BURROW button (to reach one off screen), the
@@ -609,7 +609,7 @@ class PlayTest(Tour):
 
     def leave_thin_patch(self, s):
         """Sifting a patch that is nearly bare: click a better one that is in view. One that needs the FOOD button or a hop
-        is not worth leaving for: FOOD picks the nearest patch, this one, so the crab sifts on until it is bare."""
+        is not worth leaving for: the button's own pick may be this one, so the crab sifts on until it is bare."""
         if self.sift is None or self.sift[0] != s.feeding:
             return
         _, rich, food, t = self.sift

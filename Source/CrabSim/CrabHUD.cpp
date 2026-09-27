@@ -265,7 +265,7 @@ void ACrabHUD::DrawReasonLine(const FBox2D& Rect, const FString& Reason, float S
 FString ACrabHUD::DrawFoodButton(const ACrabPawn& Crab, float Scale)
 {
 	const FString Reason = CrabGoto::ReasonText(Crab.CheckGoToFood());
-	DrawGotoButton(CrabHud::FoodButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("FOOD"), TEXT("nearest patch"), FoodReady, Reason, Scale);
+	DrawGotoButton(CrabHud::FoodButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("FOOD"), TEXT("best patch"), FoodReady, Reason, Scale);
 	return Reason;
 }
 
@@ -393,7 +393,11 @@ void ACrabHUD::DrawMessage(const ACrabPawn& Crab, float Scale, const TArray<FStr
 void ACrabHUD::DrawHints(const ACrabPawn& Crab, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
-	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting());
+	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting(), Crab.IsRoundOver());
+	if (Hint.First.IsEmpty())
+	{
+		return;
+	}
 	TArray<FString> Lines;
 	Lines.Add(Hint.First);
 	if (!Hint.Second.IsEmpty())

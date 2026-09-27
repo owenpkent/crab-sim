@@ -46,6 +46,30 @@ namespace
 		FVector2D FoodButton() const { return CrabHud::FoodButtonRect(GotoView.X, GotoView.Y).GetCenter(); }
 		FVector2D BurrowButton() const { return CrabHud::BurrowButtonRect(GotoView.X, GotoView.Y).GetCenter(); }
 
+		/** The patch the FOOD button should pick, by the rule's own score: the best of those that hold enough to be worth it. */
+		int32 BestPatch() const
+		{
+			int32 Best = INDEX_NONE;
+			float BestScore = -1.f;
+			for (int32 Index = 0; Index < Beach->GetFoodPatches().Num(); ++Index)
+			{
+				const FCrabFoodPatch& Patch = Beach->GetFoodPatches()[Index];
+				if (Patch.Richness < CrabGoto::Tuning::MinRichness)
+				{
+					continue;
+				}
+				CrabGoto::FPatch Candidate;
+				Candidate.Distance = FVector::Dist2D(Crab->GetActorLocation(), Patch.Location);
+				Candidate.Richness = Patch.Richness;
+				if (CrabGoto::PatchScore(Candidate) > BestScore)
+				{
+					BestScore = CrabGoto::PatchScore(Candidate);
+					Best = Index;
+				}
+			}
+			return Best;
+		}
+
 		/** The patch nearest the crab, whatever it holds. */
 		int32 NearestPatch() const
 		{
@@ -71,7 +95,7 @@ namespace
 	};
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabGotoFoodWalksAndFeedsTest, "CrabSim.Goto.PressingFoodWalksToTheNearestPatchAndFeeds", TestFlags)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabGotoFoodWalksAndFeedsTest, "CrabSim.Goto.PressingFoodWalksToTheBestPatchAndFeeds", TestFlags)
 bool FCrabGotoFoodWalksAndFeedsTest::RunTest(const FString& Parameters)
 {
 	FGotoRig Rig;
@@ -80,15 +104,16 @@ bool FCrabGotoFoodWalksAndFeedsTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	Rig.Beach->SetTideClock(LowTide);
-	const int32 Nearest = Rig.NearestPatch();
-	const FVector Patch = Rig.Beach->GetFoodPatches()[Nearest].Location;
+	const int32 Best = Rig.BestPatch();
+	TestTrue(TEXT("the best patch is not the nearest one here: the rule is not just distance"), Best != Rig.NearestPatch());
+	const FVector Patch = Rig.Beach->GetFoodPatches()[Best].Location;
 	const FVector Behind = Rig.Ground(0.f, 900.f);
 	const float FoodBefore = Rig.Crab->GetFood();
 
 	TestEqual(TEXT("the button is on"), Rig.Crab->CheckGoToFood(), CrabGoto::EFoodResult::Ok);
 	Rig.Controller->HandleLeftPress(*Rig.Crab, Rig.FoodButton(), GotoView, &Behind);
 	TestTrue(TEXT("the crab is sent walking"), Rig.Crab->HasMoveTarget());
-	TestTrue(TEXT("to the middle of the nearest patch, not to the ground behind the button"), FVector::Dist2D(Rig.Crab->GetMoveTarget(), Patch) < 1.f);
+	TestTrue(TEXT("to the middle of the best patch, not to the ground behind the button"), FVector::Dist2D(Rig.Crab->GetMoveTarget(), Patch) < 1.f);
 
 	// The rest of the press, held on the button, is not a walk to the ground behind it.
 	Rig.Controller->HandleHold(*Rig.Crab, Behind);
@@ -96,7 +121,7 @@ bool FCrabGotoFoodWalksAndFeedsTest::RunTest(const FString& Parameters)
 
 	Rig.World.TickSeconds(FVector::Dist2D(Rig.Crab->GetActorLocation(), Patch) / 300.f + 3.f);
 	TestTrue(TEXT("and feeds when it gets there"), Rig.Crab->IsFeeding());
-	TestEqual(TEXT("on that patch"), Rig.Crab->GetFeedingPatch(), Nearest);
+	TestEqual(TEXT("on that patch"), Rig.Crab->GetFeedingPatch(), Best);
 	Rig.World.TickSeconds(3.f);
 	TestTrue(TEXT("and the food goes up"), Rig.Crab->GetFood() > FoodBefore);
 	return true;
@@ -111,10 +136,10 @@ bool FCrabGotoFoodSkipsTest::RunTest(const FString& Parameters)
 		return false;
 	}
 	Rig.Beach->SetTideClock(LowTide);
-	const int32 First = Rig.NearestPatch();
+	const int32 First = Rig.BestPatch();
 	Rig.Beach->TakeFood(First, 10.f);
 	int32 Chosen = INDEX_NONE;
-	TestEqual(TEXT("with the nearest bare the button is still on"), Rig.Crab->CheckGoToFood(&Chosen), CrabGoto::EFoodResult::Ok);
+	TestEqual(TEXT("with the best bare the button is still on"), Rig.Crab->CheckGoToFood(&Chosen), CrabGoto::EFoodResult::Ok);
 	TestTrue(TEXT("and it picks another patch"), Chosen != First && Chosen != INDEX_NONE);
 	const FVector Behind = Rig.Ground(0.f, 900.f);
 	Rig.Controller->HandleLeftPress(*Rig.Crab, Rig.FoodButton(), GotoView, &Behind);
@@ -170,7 +195,7 @@ bool FCrabGotoFoodTideTest::RunTest(const FString& Parameters)
 	Rig.Beach->SetTideClock(LowTide);
 	int32 Chosen = INDEX_NONE;
 	Rig.Crab->CheckGoToFood(&Chosen);
-	TestEqual(TEXT("at low water the crab's own patch is the nearest"), Chosen, 5);
+	TestEqual(TEXT("at low water the crab's own patch is the best: richest, and no walk"), Chosen, 5);
 	Rig.Beach->SetTideClock(24.f);
 	TestTrue(TEXT("just before it floods, the patch is about to be soaked"), Rig.Beach->GetSecondsUntilWaterDeeperThan(1700.f, -420.f, CrabFood::SoakDepth) < CrabGoto::Tuning::FeedLeadSeconds);
 	Rig.Crab->CheckGoToFood(&Chosen);
@@ -264,9 +289,7 @@ bool FCrabGotoFromBurrowTest::RunTest(const FString& Parameters)
 	Rig.Controller->HandleLeftPress(*Rig.Crab, Rig.FoodButton(), GotoView, &Behind);
 	TestFalse(TEXT("the press brings the crab out"), Rig.Crab->IsInBurrow());
 	TestTrue(TEXT("and sends it to a patch"), Rig.Crab->HasMoveTarget());
-	int32 Chosen = INDEX_NONE;
-	Rig.Crab->CheckGoToFood(&Chosen);
-	TestTrue(TEXT("the nearest one"), FVector::Dist2D(Rig.Crab->GetMoveTarget(), Rig.Beach->GetFoodPatches()[Rig.NearestPatch()].Location) < 1.f);
+	TestTrue(TEXT("the best one"), FVector::Dist2D(Rig.Crab->GetMoveTarget(), Rig.Beach->GetFoodPatches()[Rig.BestPatch()].Location) < 1.f);
 	return true;
 }
 

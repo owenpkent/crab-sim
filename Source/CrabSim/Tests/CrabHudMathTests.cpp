@@ -370,6 +370,10 @@ bool FCrabHudHintTextTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("in a burrow it says how to come out"), CrabHud::HintText(120.f, true, false).First.Contains(TEXT("come out")));
 	TestTrue(TEXT("molting it says how to cancel"), CrabHud::HintText(120.f, true, true).First.Contains(TEXT("cancel")));
 	TestTrue(TEXT("and every hint fits"), CrabHud::HintText(120.f, true, true).First.Len() <= 40 && CrabHud::HintText(120.f, true, false).First.Len() <= 40);
+
+	const CrabHud::FHintText Over = CrabHud::HintText(120.f, true, false, true);
+	TestTrue(TEXT("with the results panel up there is no hint, not a stale one for a crab in a burrow"), Over.First.IsEmpty() && Over.Second.IsEmpty());
+	TestTrue(TEXT("and none in the first minute either"), CrabHud::HintText(10.f, false, false, true).First.IsEmpty());
 	return true;
 }
 

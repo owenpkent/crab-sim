@@ -23,7 +23,7 @@ struct FCrabPointer
  * - Click a food patch: walk to it and sift it until it is bare, the crab is full or it moves on.
  *   A burrow or patch is a big target on screen at any camera range: an ellipse at least 90 by 60 px
  *   (CrabPick), on top of its world radius. Priority: burrow, then the crab, then patch, then ground.
- * - Click the HUD's FOOD button: walk to the nearest food patch worth the walk and feed. BURROW: walk to the
+ * - Click the HUD's FOOD button: walk to the best food patch and feed. BURROW: walk to the
  *   safest burrow and dig in. Same as clicking them, but they need no aim and work when the target is off screen.
  * - Click the HUD's dig button: dig a new burrow where the crab stands. Any walk cancels it.
  * - Click the HUD's molt button, in a burrow: molt. Leaving the burrow cancels it.

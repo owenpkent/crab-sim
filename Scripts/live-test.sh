@@ -39,7 +39,7 @@
 #          full); click elsewhere (burrow_exit, nothing cancelled). About a minute.
 #   goto   launched with CrabSim.StateLog 1,CrabSim.TideSpeed 0 (tide frozen at
 #          low water). In order: click the HUD's FOOD button (goto_food, the crab
-#          walks, food_begin on the nearest patch, food rising); click the BURROW
+#          walks, food_begin on the best patch, food rising); click the BURROW
 #          button (goto_burrow, food_end, burrow_enter in the highest burrow); click
 #          BURROW again while dug in (goto_refused, no walk, still in). About a minute.
 #

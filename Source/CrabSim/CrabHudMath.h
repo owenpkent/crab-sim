@@ -202,9 +202,13 @@ namespace CrabHud
 		FString Second;
 	};
 
-	/** All the controls for the first minute of a round, then one short line for what the crab is doing. */
-	inline FHintText HintText(float RoundSeconds, bool bInBurrow, bool bMolting)
+	/** All the controls for the first minute of a round, then one short line for what the crab is doing. None while the results panel is up. */
+	inline FHintText HintText(float RoundSeconds, bool bInBurrow, bool bMolting, bool bRoundOver = false)
 	{
+		if (bRoundOver)
+		{
+			return {FString(), FString()};
+		}
 		if (RoundSeconds < FullHintSeconds)
 		{
 			return {TEXT("Click: walk. Hold: follow."), TEXT("Right click: dash. Click crab: dance.")};

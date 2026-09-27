@@ -8,7 +8,7 @@ Unreal Engine 5.8, C++. Design brief in `GAME.md`.
 
 Playable: an animated fiddler crab on a sloped 3D beach with a tide that rises and falls, translucent water with
 foam, burrows that flood, grip that the surge drains, a dance, food patches to sift, burrows the crab digs
-itself with a big on-screen button, big FOOD and BURROW buttons that walk the crab to the nearest food patch and the
+itself with a big on-screen button, big FOOD and BURROW buttons that walk the crab to the best food patch and the
 safest burrow with one click, a crab that peeks out of its hole, and molting: three molts in a burrow, each ten
 seconds and 80% of the food, win the round. Gulls and pinching are not built. The crab, sand and water are real assets
 (`Art/README.md`). Rocks, shells and plants still wait on CC0 environment
@@ -21,8 +21,8 @@ assets that need network access to fetch.
 - Left click a burrow: walk there and dig in. Click elsewhere to come out.
 - Left click a food patch (green mud): walk there and feed until it is bare or you are full.
   Burrows and patches are click targets at least 90 by 60 px on screen (an ellipse) at any camera range.
-- Left click the FOOD button (left of MOLT and DIG): walk to the nearest food patch that is dry, has food and stays
-  dry long enough, and feed. BURROW, below it: walk to the safest burrow you can reach and dig in. No aim needed, and
+- Left click the FOOD button (left of MOLT and DIG): walk to the best food patch (richness over distance, dry, and
+  dry long enough) and feed. BURROW, below it: walk to the safest burrow you can reach and dig in. No aim needed, and
   they work when the target is off screen.
 - Left click the DIG button (bottom right): dig a new burrow where the crab stands. Four seconds of standing still,
   costs 30% food, needs dry sand away from other burrows and patches. Any walk cancels it.
@@ -91,7 +91,7 @@ LIVE_SCENARIOS=molt Scripts/live-test.sh
 ```
 
 The `goto` scenario (about a minute, tide frozen at low water) clicks the HUD's FOOD button and checks that the crab
-walks to the nearest patch (patch2, off screen at the start) and feeds there with its food rising, clicks BURROW while
+walks to the best patch (patch3, richest for its distance from the start) and feeds there with its food rising, clicks BURROW while
 it feeds and checks that it stops, walks to the highest burrow and digs in, then clicks BURROW again while dug in and
 checks that the press is refused, orders no walk and leaves the crab where it is. Run it alone with:
 

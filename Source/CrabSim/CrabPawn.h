@@ -105,7 +105,7 @@ public:
 	/** Ok if the BURROW button may be pressed, with the burrow it would go to in OutBurrow, otherwise why not. */
 	CrabGoto::EBurrowResult CheckGoToBurrow(int32* OutBurrow = nullptr) const;
 
-	/** Walk to the nearest food patch worth the walk and feed there: the same as clicking it. False, with a message, if CheckGoToFood refuses. */
+	/** Walk to the best food patch (rich and not too far) and feed there: the same as clicking it. False, with a message, if CheckGoToFood refuses. */
 	bool GoToFood();
 	/** Walk to the safest burrow the crab can reach and dig in: the same as clicking it. False, with a message, if CheckGoToBurrow refuses. */
 	bool GoToBurrow();
