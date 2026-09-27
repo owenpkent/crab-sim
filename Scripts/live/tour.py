@@ -479,6 +479,8 @@ def main(tour_class=None):
     finally:
         if run.mouse:
             run.mouse.close()  # releases any button still held
+        if run.pad:
+            run.pad.close()  # centres the stick
         run.write_events()
 
     failed = len(run.failures) + (1 if aborted else 0)

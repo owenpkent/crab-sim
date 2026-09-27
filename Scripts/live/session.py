@@ -25,7 +25,8 @@ Usage: session.py <game log> <output dir> [game pid] [scenario]
   BURROW again while dug in and get refused; the tide is frozen at low water) or "gull"
   (CrabSim.GullForce 1 brings a gull at once: answer it with the BURROW button and dig in so it gives
   up, then leave the burrow and stand still to be eaten, and start a new round; the tide is frozen at
-  low water).
+  low water) or "onestick" (CrabSim.OneStick 1: a virtual gamepad's left stick, from gamepad.py, drives
+  MENU and STEER; the mouse still does clicks and taps; the tide is frozen at low water).
 
 Time limits are in game seconds (the t= field), which run at real time. Each
 wait also has a wall-clock guard so a stalled game cannot hang the run.
@@ -42,6 +43,7 @@ from collections import namedtuple
 
 from focus import (focus_game_window, pointer_position, screenshot, warp_pointer_to_screen,
                    window_bounds, window_centre)
+from gamepad import Gamepad
 from kbm import BTN_LEFT, BTN_RIGHT, Mouse
 
 # ---- what the scenarios expect of the game ----
@@ -145,6 +147,20 @@ GULL_STILL_WINDOW = 3.0      # s before the catch in which the crab must have st
 GULL_STILL_MOVE = 25.0       # uu the crab may drift in that time
 GULL_NEW_ROUND_WINDOW = 2.0  # s from the click on NEW ROUND to round_new and over=0 eaten=0
 
+# onestick (TideSpeed 0, CrabSim.OneStick 1: the stick and a lone click drive MENU and STEER).
+# The defaults are CrabSim.StickTapOuter 0.5, StickTapInner 0.2, StickTapMax 0.4 s, StickTapGap 0.6 s: the
+# hold and settle below fit comfortably inside a tap, and the wait below comfortably outside the gap.
+STICK_PEAK = 0.9             # stick magnitude for a tap: past Outer with room to spare
+STICK_HOLD = 0.15            # s held at the peak, so the game sees it before the tap starts falling back
+STICK_SETTLE = 0.15          # s at rest after a tap, before the next one: under StickTapGap, so they chain
+STICK_TAP_WINDOW = 1.5       # s from a tap to the cursor, select, toggle or mode event it causes
+STICK_GAP_WAIT = 1.0         # s to wait out StickTapGap so an open chain closes on its own
+STICK_HOLD_SECONDS = 2.0     # s the stick is held over for STEER, well past StickTapMax: never a tap
+STICK_MOVE_MIN = 150.0       # uu the crab must cover on the world +Y axis (screen right) while STEER holds it there
+STICK_STOP_WINDOW = 1.0      # s from mode=menu to the crab's target clearing (it stops)
+STICK_PARTIAL = 0.6          # partial deflection: CrabStick::SteerSpeedMultiplier(0.6, defaults) is about 0.675
+STICK_PARTIAL_SLOWER_FACTOR = 0.85  # the partial-deflection distance must be under this fraction of the full one
+
 # tide (TideSpeed 10: a whole tide is 18 s). The limits below are for that speed; LIVE_TIDE_SPEED
 # below 10 stretches the tide-clock ones (rise, swept, fall) by 10/speed.
 try:
@@ -188,6 +204,7 @@ MOLT_BUTTON_RE = re.compile(r"\smolt=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 NEW_ROUND_RE = re.compile(r"\snewround=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 GOFOOD_RE = re.compile(r"\sgofood=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 GOBURROW_RE = re.compile(r"\sgoburrow=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
+ONESTICK_BUTTON_RE = re.compile(r"\sonestick=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 GULL_PIXEL_RE = re.compile(r"\sgull=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 READY_RE = re.compile(r"LogCrabSim:\s*CRABSIM_READY")
 PROBLEM_RE = re.compile(r"Fatal error|Ensure condition failed|Signal 11|SIGSEGV|Unhandled Exception")
@@ -196,11 +213,11 @@ State = namedtuple("State", "t x y z yaw speed target dash grip depth water tide
                             "food feeding dig dug molts molt soft over scale eaten", defaults=(None,) * 19)
 Event = namedtuple("Event", "name t rest", defaults=("",))
 # view is (width, height) of the game viewport, crab is a pixel (or (-1, -1)), burrows and patches map index to a
-# pixel, dig, molt, newround, gofood and goburrow are the pixels at the middle of the HUD's dig button, molt button,
-# the results panel's new round button and the FOOD and BURROW buttons (or None), and gull is the pixel of a gull that is
-# coming (or None when there is none).
-Screen = namedtuple("Screen", "t view crab burrows patches dig molt newround gofood goburrow gull",
-                    defaults=({}, None, None, None, None, None, None))
+# pixel, dig, molt, newround, gofood, goburrow and onestick are the pixels at the middle of the HUD's dig button, molt
+# button, the results panel's new round button, the FOOD and BURROW buttons and the ONE STICK toggle (or None), and
+# gull is the pixel of a gull that is coming (or None when there is none).
+Screen = namedtuple("Screen", "t view crab burrows patches dig molt newround gofood goburrow onestick gull",
+                    defaults=({}, None, None, None, None, None, None, None))
 # A place in the log: the game time, and how many states and events had been read.
 Mark = namedtuple("Mark", "t states events state")
 # The gull: phase is Circling, Landing, Stalking, Lunging, Leaving or Caught, loc and alt place it, dist is uu to the
@@ -239,6 +256,12 @@ def event_detail(event, key):
     return float(m.group(1)) if m else None
 
 
+def event_word(event, key):
+    """The word after key= in an event's detail (one-stick's select=FOOD, mode=steer, dir=up), or None."""
+    m = re.search(r"\b%s=(\w+)" % re.escape(key), event.rest)
+    return m.group(1) if m else None
+
+
 def parse_screen(line):
     """A Screen from a CRABSIM_SCREEN line, or None."""
     m = SCREEN_RE.search(line)
@@ -253,6 +276,7 @@ def parse_screen(line):
     again = NEW_ROUND_RE.search(m.group("rest"))
     food = GOFOOD_RE.search(m.group("rest"))
     hole = GOBURROW_RE.search(m.group("rest"))
+    toggle = ONESTICK_BUTTON_RE.search(m.group("rest"))
     seen = GULL_PIXEL_RE.search(m.group("rest"))
     return Screen(float(m.group("t")), (int(m.group("vw")), int(m.group("vh"))),
                   (float(m.group("cx")), float(m.group("cy"))), burrows, patches,
@@ -261,6 +285,7 @@ def parse_screen(line):
                   (float(again.group("x")), float(again.group("y"))) if again else None,
                   (float(food.group("x")), float(food.group("y"))) if food else None,
                   (float(hole.group("x")), float(hole.group("y"))) if hole else None,
+                  (float(toggle.group("x")), float(toggle.group("y"))) if toggle else None,
                   (float(seen.group("x")), float(seen.group("y"))) if seen else None)
 
 
@@ -381,6 +406,7 @@ class Run:
         self.pid = pid
         self.window = None
         self.mouse = None
+        self.pad = None
         self.passed = 0
         self.failures = []
         self.shot_number = 0
@@ -539,6 +565,23 @@ class Run:
             self.note("events so far: %s" % self.events_text())
         return got
 
+    def find_event_word(self, start, name, key, value, limit_t):
+        """The first event named `name`, at or before limit_t, whose key=value detail matches (one-stick's
+        select=FOOD, mode=steer, cursor=BURROW, dir=up: words, not the numbers event_detail reads)."""
+        for e in self.tail.events[start:]:
+            if e.name == name and e.t <= limit_t and event_word(e, key) == value:
+                return e
+        return None
+
+    def expect_event_word(self, mark, name, key, value, window, what):
+        limit = mark.t + window + STATE_INTERVAL
+        got = self.wait_for(lambda: self.find_event_word(mark.events, name, key, value, limit), limit)
+        self.check(got is not None, "%s within %.1f s%s" % (
+            what, window, "" if got is None else " (after %.2f s)" % (got.t - mark.t)))
+        if got is None:
+            self.note("events so far: %s" % self.events_text())
+        return got
+
     def events_text(self):
         return ", ".join("%s@%.1f" % (e.name, e.t) for e in self.tail.events) or "none"
 
@@ -601,6 +644,16 @@ class Run:
         mark = self.mark()
         self.mouse.click(BTN_LEFT, CLICK_HOLD)
         return mark
+
+    # ---- the virtual gamepad (one-stick) ----
+    def stick_tap(self, x, y):
+        """One clean tap on the virtual gamepad's stick: to (x, y) and back to rest, comfortably inside
+        StickTapMax (0.4 s by default) and with enough rest after it (StickTapSettle < StickTapGap) that
+        the next tap, if any, still chains."""
+        self.pad.set_stick(x, y)
+        time.sleep(STICK_HOLD)
+        self.pad.centre_stick()
+        time.sleep(STICK_SETTLE)
 
     # ---- shared start ----
     def begin(self, want_mouse, settle, focus_attempts=10):
@@ -1505,9 +1558,110 @@ class Run:
             self.step_dig()
         self.finish()
 
+    # ---- scenario onestick ----
+    def scenario_onestick(self):
+        """CrabSim.OneStick 1: a virtual gamepad (gamepad.py) drives MENU and STEER, and the mouse still
+        does clicks and taps. The crab starts in MENU with the cursor on MOVE: nothing is logged for that
+        alone (only a change is), so the first checkpoint is the first tap below, not the start itself.
+        """
+        first = self.begin(want_mouse=True, settle=SETTLE)
+        self.describe("first", first)
+        self.pad = Gamepad()
+        time.sleep(0.5)
+        self.shot("ready")
+
+        # Two down taps move the cursor MOVE -> FOOD -> BURROW; a third tap, still the same chain, is a
+        # triple tap: it undoes both moves (the cursor goes back to MOVE) and enters STEER.
+        mark = self.mark()
+        self.stick_tap(0.0, STICK_PEAK)
+        self.expect_event_word(mark, "cursor", "cursor", "FOOD", STICK_TAP_WINDOW, "first down tap: cursor=FOOD")
+        mark = self.mark()
+        self.stick_tap(0.0, STICK_PEAK)
+        self.expect_event_word(mark, "cursor", "cursor", "BURROW", STICK_TAP_WINDOW, "second down tap: cursor=BURROW")
+        mark = self.mark()
+        self.stick_tap(0.0, STICK_PEAK)
+        self.expect_event(mark, "toggle", STICK_TAP_WINDOW, "third tap: a triple tap fires")
+        self.expect_event_word(mark, "mode", "mode", "steer", STICK_TAP_WINDOW, "and the mode flips: mode=steer")
+        self.expect_event_word(mark, "cursor", "cursor", "MOVE", STICK_TAP_WINDOW, "the cursor is undone back to MOVE")
+
+        # STEER: holding the stick right drives the crab along world +Y, screen right (see the header note).
+        # Full deflection first, then centre and rest, then partial deflection (about 0.6): CrabStick::
+        # SteerSpeedMultiplier ramps from StickMinSpeed (0.35 by default) at Inner to 1 at full deflection, so
+        # the crab must cover measurably less ground in the same time at partial deflection.
+        full_mark = self.mark()
+        self.pad.set_stick(1.0, 0.0)
+        time.sleep(STICK_HOLD_SECONDS)
+        full_state = self.state_at_or_after(full_mark.states, full_mark.t + STICK_HOLD_SECONDS)
+        full_distance = (full_state.y - full_mark.state.y) if full_state and full_mark.state else 0.0
+        self.check(full_state is not None and full_distance >= STICK_MOVE_MIN,
+                   "at full deflection the crab moves right (world +Y) by at least %.0f uu in %.1f s (got %.0f uu)"
+                   % (STICK_MOVE_MIN, STICK_HOLD_SECONDS, full_distance))
+
+        self.pad.centre_stick()
+        time.sleep(STICK_SETTLE)
+        partial_mark = self.mark()
+        self.pad.set_stick(STICK_PARTIAL, 0.0)
+        time.sleep(STICK_HOLD_SECONDS)
+        partial_state = self.state_at_or_after(partial_mark.states, partial_mark.t + STICK_HOLD_SECONDS)
+        partial_distance = (partial_state.y - partial_mark.state.y) if partial_state and partial_mark.state else 0.0
+        self.check(partial_state is not None and 0.0 < partial_distance < full_distance * STICK_PARTIAL_SLOWER_FACTOR,
+                   "at partial deflection (%.1f) the crab covers measurably less ground in the same %.1f s: "
+                   "%.0f uu against %.0f uu at full deflection" % (STICK_PARTIAL, STICK_HOLD_SECONDS, partial_distance, full_distance))
+
+        # Centre the stick, let the held reach's chain (there is none: it ran too long to be a tap) settle,
+        # then three quick taps toggle back to MENU. The crab stops: its target clears.
+        self.pad.centre_stick()
+        time.sleep(STICK_GAP_WAIT)
+        mark = self.mark()
+        self.stick_tap(0.0, STICK_PEAK)
+        self.stick_tap(0.0, STICK_PEAK)
+        self.stick_tap(0.0, STICK_PEAK)
+        self.expect_event(mark, "toggle", STICK_TAP_WINDOW, "triple tap back: a triple tap fires")
+        self.expect_event_word(mark, "mode", "mode", "menu", STICK_TAP_WINDOW, "and the mode flips: mode=menu")
+        self.expect_state(mark, lambda s: s.target is None, STICK_STOP_WINDOW, "the crab's target clears: it stops")
+
+        # Down then right: FOOD is highlighted, then selected, held pending until the gap closes it.
+        mark = self.mark()
+        self.stick_tap(0.0, STICK_PEAK)
+        self.expect_event_word(mark, "cursor", "cursor", "FOOD", STICK_TAP_WINDOW, "down: cursor=FOOD")
+        self.stick_tap(STICK_PEAK, 0.0)
+        time.sleep(STICK_GAP_WAIT)
+        self.expect_event_word(mark, "select", "select", "FOOD", STICK_GAP_WAIT + STICK_TAP_WINDOW,
+                               "right, then the gap closes: select=FOOD")
+        self.expect_event(mark, "goto_food", STICK_TAP_WINDOW, "and it does what the FOOD button does: goto_food")
+
+        # Three quick clicks with the mouse chain the same way: a triple tap, back into STEER.
+        self.place_and_settle(0, 0)
+        mark = self.mark()
+        self.mouse.click(BTN_LEFT, CLICK_HOLD)
+        time.sleep(STICK_SETTLE)
+        self.mouse.click(BTN_LEFT, CLICK_HOLD)
+        time.sleep(STICK_SETTLE)
+        self.mouse.click(BTN_LEFT, CLICK_HOLD)
+        self.expect_event(mark, "toggle", STICK_TAP_WINDOW, "triple click: a triple tap fires")
+        self.expect_event_word(mark, "mode", "mode", "steer", STICK_TAP_WINDOW, "and the mode flips: mode=steer")
+
+        # Click the ONE STICK button: it turns off, and the stick is then ignored.
+        screen = self.fresh_screen()
+        if screen is None or screen.onestick is None:
+            self.check(False, "the ONE STICK button's screen position is in the CRABSIM_SCREEN log")
+        else:
+            click_mark = self.click_view(screen, screen.onestick, "the ONE STICK button")
+            if click_mark is not None:
+                self.expect_event(click_mark, "onestick_off", STICK_TAP_WINDOW, "onestick_off")
+                mark = self.mark()
+                self.pad.set_stick(0.0, STICK_PEAK)
+                time.sleep(STICK_HOLD_SECONDS)
+                self.pad.centre_stick()
+                time.sleep(STICK_SETTLE)
+                self.tail.poll()
+                self.check(self.find_event(mark.events, "cursor", float("inf")) is None,
+                           "the stick is ignored once one-stick mode is off: no cursor event from that tap")
+        self.finish()
+
 
 SCENARIOS = {"basic": Run.scenario_basic, "tide": Run.scenario_tide, "forage": Run.scenario_forage, "molt": Run.scenario_molt,
-             "goto": Run.scenario_goto, "gull": Run.scenario_gull}
+             "goto": Run.scenario_goto, "gull": Run.scenario_gull, "onestick": Run.scenario_onestick}
 
 
 def main():
@@ -1535,6 +1689,8 @@ def main():
     finally:
         if run.mouse:
             run.mouse.close()  # releases any button still held
+        if run.pad:
+            run.pad.close()  # centres the stick
 
     failed = len(run.failures) + (1 if aborted else 0)
     print("\n%s: %d passed, %d failed" % (name, run.passed, failed))

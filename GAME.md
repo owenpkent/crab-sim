@@ -240,7 +240,8 @@ when the crab walks right up to a landed gull), `StalkSpeed` (130), `GiveUpSecon
 
 ## Input model
 
-Pointer-first. Nothing requires a key, the wheel, or a timing window.
+Pointer-first. Nothing requires a key, the wheel, or a timing window. An optional one-stick scheme for a
+player with no other input is built on top of it: see "One-stick mode" below.
 
 - Left click the ground: walk there and stop.
 - Hold left: walk toward the cursor and keep following it.
@@ -265,6 +266,83 @@ Pointer-first. Nothing requires a key, the wheel, or a timing window.
 
 The dash is on the right button, not a drag, because a held left button already means "follow the cursor".
 Drag and hold are the same gesture there. Pinch is not built yet and will get a button that is not left click.
+
+## One-stick mode (built)
+
+An optional control scheme for a player whose only input is one analog stick (a wheelchair joystick, arriving
+as a virtual gamepad's left stick) with a left mouse click as an alternative "tap". No other buttons, and no
+timing window a stick with tremor or limited travel cannot meet: every threshold below is a CVar. Toggle it with
+`CrabSim.OneStick 1`, the F2 key (one key, for a player who types on an on-screen keyboard), or the "ONE STICK"
+HUD button (top right, clickable whichever way the game is being played). The choice is saved to
+GameUserSettings.ini (`[CrabSim] OneStick`) and read back on startup, so it does not need setting again every
+launch. Automated runs (anything launched with -unattended: the tests, live tests and recordings) neither read nor
+write it. While on, the help line at the bottom left talks about the stick, not the mouse. Off, the game is exactly as the rest of this document describes and the stick is ignored. On, left
+clicks that are not on a HUD button stop doing ground clicks (follow, dance, burrow, patch) and become taps
+instead; the HUD buttons and right-click dash are unchanged.
+
+Two modes:
+
+- **MENU.** A vertical column on the HUD, large text, a highlighted cursor box: MOVE, FOOD, BURROW, DIG, MOLT,
+  DANCE, DASH, in that order, wrapping at both ends. An up or down tap moves the cursor. A left or right tap, or
+  a lone left click, selects the highlighted item. FOOD, BURROW, DIG and MOLT do exactly what their HUD buttons
+  do and stay in MENU; DANCE toggles the dance and stays in MENU; DASH dashes in the crab's facing direction (a
+  point ahead of it, into the same `TryDash` a right click uses) and stays in MENU; MOVE enters STEER. Once the
+  round is over (won or eaten, whenever the results panel's own NEW ROUND button shows), the list falls back to
+  that one item, NEW ROUND, in place of the seven above (`CrabStick::ActiveItemCount`/`ActiveItemAt`): selecting
+  it does exactly what the results panel's button does, so a stick-only player can start the next round without
+  a mouse. The round ending or a new one starting always snaps the cursor to the first item of whichever list is
+  now showing and forces MENU, so the cursor is never left pointing at an item that just vanished.
+- **STEER.** The stick's analog XY drives the crab directly and screen-relative (stick up is up on screen: the
+  camera looks along world +X with +Y on its right, so world X takes the stick's Y and world Y takes its X),
+  through the same movement path "hold left to follow the cursor" uses: a point some distance ahead of the crab,
+  reset every tick, so it never arrives and stops on its own. Walk speed scales with how far the stick is pushed,
+  `CrabStick::SteerSpeedMultiplier`: `CrabSim.StickMinSpeed` (default 0.35) at Inner deflection, ramping linearly
+  to 1 at full deflection, monotonic and clamped at both ends. It is a plain multiplier on `CrabPawn`'s existing
+  walking speed (alignment to the travel direction still sets the base, as it always did), not a change to that
+  model. `SetMoveTarget` and `ClearMoveTarget` both reset it to 1, so it can never leak into a mouse walk, a
+  go-to walk, a dash (which never reads it at all), or anything the tide or a gull does to the crab; leaving
+  STEER, and turning one-stick off, both go through `ClearMoveTarget` or reset it directly.
+
+A triple tap toggles MENU and STEER from either side. From MENU it resumes STEER; from STEER it returns to MENU
+and the crab stops.
+
+Tap and chain rules, pure and unit tested in `Source/CrabSim/CrabStickMath.h` (`FStickTapDetector`,
+`FClickTapDetector`, `FMenuState`):
+
+- A stick tap: the stick's magnitude rises above `CrabSim.StickTapOuter` (default 0.5) and falls back below
+  `CrabSim.StickTapInner` (default 0.2, so hysteresis keeps a tremor wobbling round one threshold from ever
+  making a tap) within `CrabSim.StickTapMax` seconds (default 0.4). Direction is the dominant axis at the peak
+  magnitude. Held longer than the max, it is not a tap: in STEER that is just steering, in MENU it does nothing
+  (no auto-repeat).
+- A click tap: a left press and release within the same max, not on any HUD button. Directionless. A longer
+  press is not a tap and has no meaning of its own: the player's own drag tool latches on a stationary press
+  around half a second, and a long press must never fight that gesture.
+- Taps whose gap, one's end to the next one's start, is at most `CrabSim.StickTapGap` seconds (default 0.6) chain
+  together, stick and click taps alike. The third tap of a chain always fires the toggle above and resets the
+  chain, whichever mode it started in.
+- Reversibility in MENU: an up or down move applies at once; if the chain reaches three, the cursor is put back
+  where it stood before the chain's first tap, undoing every move the chain made. A select is irreversible, so
+  it is held pending and only committed when the chain closes with fewer than three taps in it (the last pending
+  select wins, if there was more than one in the chain); if the chain reaches three the pending select is
+  dropped instead. A tap taken in STEER only ever counts toward that third tap: there is no cursor or pending
+  select there to undo.
+
+HUD, while it is on: the action column (only in MENU: it would sit in the way of the view in STEER; once the
+round is over it is just the one NEW ROUND item), a mode banner ("MENU: up/down, left/right picks, triple-tap
+to steer", "STEER: triple-tap for menu", or "Left/right or click: NEW ROUND"), and chain pips under it ("N of
+3") so the gesture building can be seen. Laid out in `CrabHudMath.h` alongside the rest of the HUD's layout,
+with its own unit tests. No mouse-wheel dependence anywhere.
+
+With `CrabSim.StateLog 1`, one-stick events log in the existing `CRABSIM_EVENT` format: `onestick_on`,
+`onestick_off`, `mode` (detail `mode=menu` or `mode=steer`), `cursor` (`cursor=<item>`), `select` (`select=<item>`,
+logged once it commits, `select=NEW_ROUND` included), `tap` (`dir=up`, `down`, `left`, `right` or `click`), and
+`toggle` for the triple tap itself (separate from `mode`, so a plain MOVE select entering STEER is not mistaken
+for one). The `onestick` scenario in `Scripts/live-test.sh` drives a virtual gamepad's stick (`Scripts/live/gamepad.py`,
+uinput, the same way the live test's virtual mouse works) through the menu, STEER at full and partial deflection,
+and the toggle button; forcing a round to end without the tide or a gull is not cheap to script live, so
+NEW ROUND is unit tested instead. `RECORD_TOUR=onestick Scripts/record.sh` records a tour of the same ground.
+
+The camera is fixed, so there is no camera steer yet: STEER only ever drives the crab.
 
 ## Movement
 

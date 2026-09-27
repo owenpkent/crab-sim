@@ -50,10 +50,25 @@
 #          gull stalks and catches the crab standing still (gull_catch within 150 uu, no
 #          gull_scared, round_eaten, over=1 eaten=1); click NEW ROUND (round_new, over=0
 #          eaten=0). About two minutes. The other scenarios run with CrabSim.Gulls 0.
+#   onestick launched with CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0,CrabSim.OneStick 1
+#          (tide frozen at low water). Drives a virtual gamepad's left stick (Scripts/live/gamepad.py,
+#          uinput the same way the virtual mouse is) alongside the virtual mouse. In order: two down taps
+#          move the MENU cursor (cursor=FOOD, cursor=BURROW), a third tap in the same chain is a triple
+#          tap (toggle, mode=steer, and cursor=MOVE: the chain undoes both moves); holding the stick right
+#          at full deflection drives the crab along +Y (screen right), covering at least 150 uu in 2 s; held
+#          at partial deflection (0.6) instead it covers measurably less ground in the same time
+#          (CrabStick::SteerSpeedMultiplier); a triple tap back (mode=menu) stops it (its target clears); a
+#          down tap then a right tap highlight FOOD and hold it pending until the gap closes it (select=FOOD,
+#          goto_food); a triple click with the mouse chains the same way (toggle, mode=steer); clicking the
+#          ONE STICK button turns it off (onestick_off), and the stick is then ignored. About half a minute.
+#          NEW_ROUND (the one-stick menu falling back to just that item once the round is over, selecting it
+#          doing what the results panel's own button does) is not exercised here: forcing a round to end
+#          without the tide or a gull is not cheap to script live, so it is unit tested instead
+#          (CrabSim.Stick.RoundOverShowsOnlyNewRoundAndSnapsTheCursorToIt in CrabStickMathTests.cpp).
 #
 # Environment overrides:
-#   LIVE_SCENARIOS="basic tide forage molt goto gull"  which scenarios to run, in this order (space or
-#                          comma separated). LIVE_SCENARIOS=tide runs only one.
+#   LIVE_SCENARIOS="basic tide forage molt goto gull onestick"  which scenarios to run, in this order
+#                          (space or comma separated). LIVE_SCENARIOS=tide runs only one.
 #   LIVE_TIDE_SPEED=<n>    CrabSim.TideSpeed for the tide scenario (default 3). Below 10
 #                          the session multiplies its tide time limits by 10/n.
 #   LIVE_RESX, LIVE_RESY   window size (default 1280x720)
@@ -83,7 +98,7 @@ export DISPLAY="${DISPLAY:-:0}"
 
 RESX="${LIVE_RESX:-1280}"
 RESY="${LIVE_RESY:-720}"
-SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto gull}"
+SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto gull onestick}"
 SCENARIOS="${SCENARIOS//,/ }"
 TIDE_SPEED="${LIVE_TIDE_SPEED:-3}"
 [[ "$TIDE_SPEED" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "LIVE_TIDE_SPEED must be a number: $TIDE_SPEED" >&2; exit 2; }
@@ -99,6 +114,7 @@ exec_cmds_for() {
 		molt)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.FoodFloor 0.9,CrabSim.Gulls 0" ;;
 		goto)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0" ;;
 		gull)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.GullForce 1" ;;
+		onestick) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0,CrabSim.OneStick 1" ;;
 		*)     return 1 ;;
 	esac
 }
@@ -131,7 +147,7 @@ wait_gone() {
 }
 
 for scn in $SCENARIOS; do
-	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto gull)." >&2; exit 2; }
+	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto gull onestick)." >&2; exit 2; }
 done
 [ -n "${SCENARIOS// /}" ] || { echo "LIVE_SCENARIOS is empty." >&2; exit 2; }
 

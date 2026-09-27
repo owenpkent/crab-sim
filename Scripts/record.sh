@@ -8,6 +8,7 @@
 #   Scripts/record.sh [OUT.mp4]         default videos/crab-sim-tour.mp4
 #   RECORD_TOUR=molt Scripts/record.sh  the molt clip instead, default videos/crab-sim-molt.mp4
 #   RECORD_TOUR=playtest SPEEDUP=4 CRF=30 Scripts/record.sh   a whole round played by the bot, videos/crab-sim-playtest.mp4
+#   RECORD_TOUR=onestick Scripts/record.sh   one-stick mode, videos/crab-sim-onestick.mp4
 #   LIMIT=150 CRF=28 Scripts/record.sh videos/small.mp4
 #   SPEEDUP=2 Scripts/record.sh videos/fast.mp4       the tour at 2x, after the capture
 #   RECORD_TIDE_SPEED=1.5 Scripts/record.sh           a faster tide (see below)
@@ -28,6 +29,13 @@
 # RECORD_TOUR=playtest records Scripts/live/playtest.py instead: a reactive bot plays one full round (three molts, up
 # to 20 minutes) at the default tide with no cheats, left clicks only, and the run folder gets its clicks.csv. LIMIT
 # defaults to 1320 s for it; the clip is the whole round, so SPEEDUP=4 CRF=30 keeps it short.
+# RECORD_TOUR=onestick records Scripts/live/tour_onestick.py instead (about 40 s, LIMIT defaults to 90 s): one-stick
+# mode (CrabSim.OneStick 1), driven by a virtual gamepad (Scripts/live/gamepad.py) alongside the mouse. The MENU
+# column with its cursor box; a tap moving the cursor to FOOD, to BURROW, and back; a right tap selecting FOOD (the
+# crab walks to the best patch); a triple tap into STEER; the stick held over at full deflection, then at partial
+# deflection (visibly slower: CrabStick::SteerSpeedMultiplier); a triple tap back to the menu, the crab stopping; a
+# mouse click on the ONE STICK button turning it off. It runs with the tide frozen (CrabSim.TideSpeed 0, unless
+# RECORD_TIDE_SPEED says otherwise) so nothing about the water can interrupt it.
 # Next to OUT.mp4 goes OUT.events.txt: what the tour did and what the game
 # logged, each with its time in the video (video=SECONDS, good to about half a
 # second, and divided by SPEEDUP).
@@ -37,7 +45,8 @@
 # with the game, so the forage, dig and burrow beats have to finish before the water
 # reaches the flats where they happen: at the default speed 0.75 that is about 50 s into the
 # clip, and faster tides leave less time. Full HUD (tide gauge, grip bar, hints) stays on.
-# The tour and molt clips run with CrabSim.Gulls 0 so no gull interrupts them; the playtest runs with gulls on.
+# The tour and molt clips run with CrabSim.Gulls 0 so no gull interrupts them; the playtest runs with gulls on;
+# the onestick clip also runs with CrabSim.Gulls 0 (and the tide frozen, above).
 #
 # Needs: an X11 session, write access to /dev/uinput, xwininfo, xprop, and ffmpeg
 # with x11grab and libx264. Opens a game window and drives the real pointer, so
@@ -45,7 +54,7 @@
 # Do not let another window cover the game: the capture is of the screen.
 #
 # Environment overrides:
-#   RECORD_TOUR=tour|molt|playtest  which tour to play (default tour)
+#   RECORD_TOUR=tour|molt|playtest|onestick  which tour to play (default tour)
 #   RECORD_TIDE_SPEED=<n>  CrabSim.TideSpeed (default 0.75: a whole tide takes 240 s; 0.3 for the molt tour)
 #   LIMIT=<s>              stop recording after this many seconds (default 240, 1320 for the playtest)
 #   FPS=30  CRF=23         capture frame rate and x264 quality (lower is better)
@@ -85,10 +94,12 @@ case "$TOUR" in
 	tour) TOUR_SCRIPT=tour.py; TOUR_TIDE=0.75; TOUR_EXEC=",CrabSim.Gulls 0" ;;
 	molt) TOUR_SCRIPT=tour_molt.py; TOUR_TIDE=0.3; TOUR_EXEC=",CrabSim.FoodFloor 0.9,CrabSim.Gulls 0" ;;
 	playtest) TOUR_SCRIPT=playtest.py; TOUR_TIDE=1; TOUR_EXEC="" ;;
-	*) echo "RECORD_TOUR must be tour, molt or playtest: $TOUR" >&2; exit 2 ;;
+	onestick) TOUR_SCRIPT=tour_onestick.py; TOUR_TIDE=0; TOUR_EXEC=",CrabSim.OneStick 1,CrabSim.Gulls 0" ;;
+	*) echo "RECORD_TOUR must be tour, molt, playtest or onestick: $TOUR" >&2; exit 2 ;;
 esac
 DEFAULT_LIMIT=240
 if [ "$TOUR" = "playtest" ]; then DEFAULT_LIMIT=1320; fi
+if [ "$TOUR" = "onestick" ]; then DEFAULT_LIMIT=90; fi
 OUT="${1:-$ROOT/videos/crab-sim-$TOUR.mp4}"
 RESX="${RECORD_RESX:-1280}"
 RESY="${RECORD_RESY:-720}"
