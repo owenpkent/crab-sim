@@ -10,7 +10,9 @@ Playable: an animated fiddler crab on a sloped 3D beach with a tide that rises a
 foam, burrows that flood, grip that the surge drains, a dance, food patches to sift, burrows the crab digs
 itself with a big on-screen button, big FOOD and BURROW buttons that walk the crab to the best food patch and the
 safest burrow with one click, a crab that peeks out of its hole, and molting: three molts in a burrow, each ten
-seconds and 80% of the food, win the round. Gulls and pinching are not built. The crab, sand and water are real assets
+seconds and 80% of the food, win the round. Gulls are built: one circles, lands (and eats a food patch), then stalks
+the crab on foot, and catches it only if it stands still outside a burrow. BURROW is the one-click answer, a dance
+begun in time scares it off, and a catch ends the round ("Eaten by a gull"). Pinching is not built. The crab, sand and water are real assets
 (`Art/README.md`). Rocks, shells and plants still wait on CC0 environment
 assets that need network access to fetch.
 
@@ -30,7 +32,10 @@ assets that need network access to fetch.
   food. Any click elsewhere leaves the burrow and cancels it for free. The sea flooding the burrow mid-molt cancels it
   and leaves the crab soft (half grip) for 30 s. Three molts win the round.
 - Left click NEW ROUND on the results panel: start again.
-- Left click the crab: dance.
+- Left click the crab: dance. Start it while a gull is still far off and 4 s of it scare the gull away for a minute.
+- A gull comes with a "Gull!" banner (top left) and an arrow at the edge of the view toward it, with its distance. It
+  is never a twitch: 25 s at least from the first circle to a possible catch, and a crab that is moving, or in a
+  burrow, is never caught. Press BURROW (or dance early) and it gives up.
 - Right click: dash toward the cursor.
 
 ## Layout
@@ -38,16 +43,20 @@ assets that need network access to fetch.
 - `Source/CrabSim/`: game module
   - `CrabMovementMath.h`, `CrabTerrainMath.h`, `CrabTide.h`, `CrabSurvivalMath.h`, `CrabFoodMath.h`,
     `CrabDigMath.h`, `CrabMoltMath.h` (molting, the round, and every pacing number in `CrabMolt::Tuning`),
-    `CrabGotoMath.h` (what FOOD and BURROW pick), `CrabPickMath.h` (the on-screen click zones), `CrabHudMath.h`: the
+    `CrabGotoMath.h` (what FOOD and BURROW pick), `CrabGullMath.h` (the gull's state machine, spawn rules and every
+    number that paces it, in `CrabGull::Tuning`), `CrabPickMath.h` (the on-screen click zones), `CrabHudMath.h`: the
     rules and the HUD layout, pure functions
   - `CrabPawn`: the crab, its camera, dance, burrow, grip, food, digging, molting and the round, its go-to
     buttons' logic, and its shape-built stand-in visual (and the stand-in that peeks over a hole)
+  - `CrabGull`: the gull actor: it runs `CrabGullMath.h` against the crab and the beach, eats a patch, ends the
+    round on a catch, and draws itself from engine shapes (body, flapping wings, bill, legs, shadow, ring)
   - `CrabPlayerController`: pointer input
   - `CrabBeach`: the terrain and water meshes, the tide clock, burrows (authored and dug), food patches, rocks and props
   - `CrabHUD`: tide gauge, grip and food bars, the FOOD, BURROW, dig and molt buttons, molt pips, soft tag, messages,
-    the help panel, results panel
-  - `CrabSimGameMode`: wires the above together
-  - `Tests/`: automation tests (rules, beach, pawn, controller, game mode). The module builds without unity files,
+    the help panel, the gull banner and arrow, results panel (fully grown, or eaten by a gull)
+  - `CrabSimGameMode`: wires the above together (and puts the gull in the world)
+  - `Tests/`: automation tests (rules, beach, pawn, controller, gull, game mode, and a fast headless balance
+    simulation of a crab that answers its gulls against one that ignores them). The module builds without unity files,
     because the test files each bring their own `TestFlags` into scope.
 - `Config/`: project ini files
 - `Scripts/`: build, test, play, live test, record, screenshot
@@ -68,7 +77,7 @@ RECORD_TOUR=playtest SPEEDUP=4 CRF=30 Scripts/record.sh   a bot plays one whole 
 ```
 
 `live-test.sh` opens a window and moves the real pointer for a few minutes: one game launch per scenario (`basic`,
-`tide`, `forage`, `molt`, `goto`). Leave the machine alone while it runs. Needs X11 and write access to `/dev/uinput`. It refuses
+`tide`, `forage`, `molt`, `goto`, `gull`). Leave the machine alone while it runs. Needs X11 and write access to `/dev/uinput`. It refuses
 to start while any other CrabSim UnrealEditor is running.
 
 The `forage` scenario (about a minute, tide frozen at low water) clicks a food patch and checks that the crab
@@ -99,6 +108,17 @@ checks that the press is refused, orders no walk and leaves the crab where it is
 LIVE_SCENARIOS=goto Scripts/live-test.sh
 ```
 
+The `gull` scenario (about two minutes, tide frozen at low water, `CrabSim.GullForce 1` so a gull comes as soon as
+the crab is out of a burrow) sees a gull circle and land 1400 to 1800 uu away, clicks BURROW and checks that the
+crab walks to the burrow without being caught and that the gull gives up (`gull_left reason=burrow`) with the round
+still on, then clicks elsewhere to come out and leaves the pointer alone: a new gull stalks and catches the crab
+standing still (`gull_catch` within 150 uu, no `gull_scared`, `round_eaten`, `over=1 eaten=1`), and NEW ROUND starts
+the round again. The other scenarios run with `CrabSim.Gulls 0`, so a natural gull never interrupts them. Run it alone with:
+
+```
+LIVE_SCENARIOS=gull Scripts/live-test.sh
+```
+
 `record.sh` launches the game, plays a 90 second tour through the same virtual pointer (feed on a patch, dig a
 burrow, dig into it, scuttle, dance, dash, then the tide rises and sweeps the crab out) and captures the window with
 ffmpeg: about 2 minutes end to end, same rules as the live test (it refuses to start if another CrabSim game is running). Writes the mp4 and an events
@@ -113,25 +133,34 @@ results panel and NEW ROUND. It runs with `CrabSim.FoodFloor 0.9` and a slow tid
 
 `RECORD_TOUR=playtest` plays `Scripts/live/playtest.py` instead: a small reactive bot that reads the state log and plays one full
 round at the default tide with left clicks only (feed the richest reachable patch, retreat to a high burrow when the sea
-rises, molt when fed, dig once when the tide is low), until the results panel. A patch or burrow that is off screen is
+rises, molt when fed, dig once when the tide is low, press BURROW when a gull lands and stay in until it has gone,
+sifting on with a far gull on every other one), until the results panel (fully grown, or eaten by a gull).
+`PLAYTEST_GULLS=ignore` plays as if there were no gulls, and `PLAYTEST_ROUNDS=<n>` plays on with NEW ROUND after a
+round a gull ended, so the balance of both can be counted. A patch or burrow that is off screen is
 reached with the FOOD or BURROW button, one click, instead of a chain of ground hops; a hop is the fallback when a
 button is greyed, and the way to open sand for the dig. The run folder gets `clicks.csv` (every click, with its kind
-and time), `playtest.log` (its last line counts the clicks, hops, button presses and clicks a minute) and five screenshots (`PLAYTEST_SHOTS=<dir>` to move them). Unlike the tours it takes as long as the
+and time), `playtest.log` (its last line counts the clicks, hops, button presses, gulls met and answered, and clicks a minute) and screenshots (`PLAYTEST_SHOTS=<dir>` to move them): the first feeding, dig, molt, high tide in a burrow, the results panel, and the first gull circling, landed and near. Unlike the tours it takes as long as the
 round does (`LIMIT` defaults to 1320 s for it).
 
 Console variables and commands:
 
 - `CrabSim.StateLog 1`: log the crab's state every 0.2 s, including `food=`, `feeding=` (the patch it is on, or -1),
   `dig=` (progress 0 to 1), `dug=` (dug burrows), `molts=`, `molt=` (progress 0 to 1), `soft=` (seconds left),
-  `over=` (the round is won) and `scale=` (how big the crab looks), plus where the crab, burrows, food patches, the
-  dig and molt buttons, the new round button and the FOOD and BURROW buttons (`gofood=`, `goburrow=`) are on screen
+  `over=` (the round is over), `scale=` (how big the crab looks) and `eaten=` (a gull caught it), plus where the crab, burrows, food patches, the
+  dig and molt buttons, the new round button, the FOOD and BURROW buttons (`gofood=`, `goburrow=`) and a gull that is
+  coming (`gull=`) are on screen
   (the live test reads it). Events such as `goto_food`, `goto_burrow`, `goto_refused`, `food_begin`,
   `food_end` (with `amount=`), `dig_begin`, `dig_done`, `dig_cancel`, `molt_begin`, `molt_done`, `molt_cancel`,
-  `molt_refused`, `soft_begin`, `soft_end`, `round_won`, `round_new`, `surge_begin` and `swept_out` are logged as
-  `CRABSIM_EVENT`
+  `molt_refused`, `soft_begin`, `soft_end`, `round_won`, `round_eaten`, `round_new`, `surge_begin`, `swept_out` and
+  the gull's `gull_circling`, `gull_landed`, `gull_stalking`, `gull_scared`, `gull_left` (with `reason=`) and
+  `gull_catch` are logged as `CRABSIM_EVENT`. While a gull is about, a `CRABSIM_GULL` line every 0.2 s gives its
+  phase, place, height, distance to the crab and the patch it stands on
 - `CrabSim.TideSpeed <n>`: tide clock multiplier. 0 freezes it at low tide, 10 makes a whole tide take 18 s
 - `CrabSim.TideTime <s>`: jump the tide clock. 0 is low tide rising, 90 is high tide
 - `CrabSim.StartFood <0..1>` and `CrabSim.FoodFloor <0..1>`: test only, both off by default (-1). The first sets the
   crab's food once, the second keeps it from dropping below that. They let a live test or a recording molt without
   foraging. Not for play.
+- `CrabSim.Gulls <0|1>`: 0 keeps every gull away (the tours and the older live scenarios run with it), 1 is the game.
+- `CrabSim.GullForce 1`: test only, off by default. Sends a gull as soon as there is none and the crab is out of its
+  burrow: no first minute, no 25 s wait, no cooldown. The `gull` live scenario runs with it.
 - `CrabSim.CameraDistance <uu>`, `CrabSim.CameraPitch <deg>`: camera. 7000 shows the whole map

@@ -137,7 +137,8 @@ undisturbed seconds in a burrow that will not flood. The first low water is not 
 round played by a bot peaked at food 0.735 in the first low water. A patch only refills once the sea has soaked it
 and left, so the first molt comes in the first tide cycle after the high water, about 200 s in (227 s in the latest
 playtest), and then about one a tide (417 s and 596 s there, a round of 9:56 with the FOOD button choosing the best
-patch; when it chose the nearest, poor patches and bare ones stretched the same bot's round to 14:41). In between the water takes the flats and floods the low
+patch; when it chose the nearest, poor patches and bare ones stretched the same bot's round to 14:41). With gulls on
+and answered, the same bot's round is 10:03 to 10:04 (see Gulls). In between the water takes the flats and floods the low
 burrows, the crab has to sit out the high tide in a high one, and the next molts wait for the flats to come back.
 Burrow choice is the game: a low burrow next to the food is a gamble (it floods first), a high one is safe but a long
 walk from the food, and a molt that the sea interrupts leaves the crab soft. Every number that sets the pace is in one
@@ -145,7 +146,7 @@ place, `CrabMolt::Tuning` in `Source/CrabSim/CrabMoltMath.h`, and the feed rate 
 
 ## Round (built)
 
-The round is won at three molts: the crab is fully grown.
+The round is won at three molts: the crab is fully grown. It is lost when a gull catches the crab (see Gulls).
 
 - A centered panel says "Fully grown!" and shows the time taken, the best time this session (kept in memory, no save
   file), molts, burrows dug, and food eaten, over a big NEW ROUND button.
@@ -153,7 +154,10 @@ The round is won at three molts: the crab is fully grown.
   ignored. Only the button does anything.
 - NEW ROUND resets the world: the tide is back at low water and running, food is back at 0.25, every patch is full and
   fresh, the dug burrows are gone, Molts is 0, grip is full and the crab is back at the start, facing the sea.
-- There is no losing state in this pass. Gulls come later.
+- A gull's catch ends the round the same way: the panel is titled "Eaten by a gull" (in a warm red, with a dry line
+  under it), shows the same stats (time, best time, molts so far, burrows dug, food eaten) over the same NEW ROUND
+  button, and the tide, hunger and every order stand still. The best time is kept only for fully grown rounds: an
+  eaten round sets none and shows "none yet" until the first win.
 
 ## Dance (built)
 
@@ -161,7 +165,78 @@ Click the crab. It turns to face the camera and does the claw-wave dance until y
 away. It cannot dance in the surge, in a burrow, or mid-dash. Until the skeletal crab exists the stand-in
 crab bounces and alternates its claws on a 120 bpm beat.
 
-Not built: what dancing does. Ideas: it draws a mate, it stakes a burrow, it faces down a rival.
+What dancing is for: it scares a gull. A crab that dances while a stalking gull is within 900 uu sends it off after
+4 s (see Gulls). While dancing the crab stands still, so a gull within 150 uu catches it: dancing near a very close gull
+is a gamble.
+
+## Gulls (built)
+
+Tone: deadpan nature documentary. A gull is a threat that is slow to arrive, loudly announced and answered with one
+click. It is never a twitch: from the first circle to the earliest possible catch there are at least 25 s (25.6 s as
+the numbers stand), and a crab that is moving, or in a burrow, is never caught. The rules are a pure state machine in
+`Source/CrabSim/CrabGullMath.h`, deterministic given a seed (the beach's own gull seed and the round's number), with
+every number in `CrabGull::Tuning`. The actor that runs it and draws it is `CrabGull`.
+
+- When. A gull begins circling when the crab has been out of a burrow and not molting, in water under 20 uu deep, for
+  25 s in a row, and no gull has been about for the last 45 s (60 s after one was scared off). Never in the first 60 s
+  of a round, never two at once, never with the results panel up.
+- Circling (12 s, no threat). A loop 400 uu across, 900 to 1300 uu from the crab toward the sea, 350 uu up, with its
+  shadow on the ground. The HUD announces it.
+- Landing (13 s). It glides down for 4 s and lands 1400 to 1800 uu from the crab: on a food patch that is free (holds
+  food, dry) if one lies in that range, else on open dry flats. It then eats where it stands for 9 s: a patch loses
+  0.04 richness a second, 0.36 in all, so the gull costs the crab food as well as time. A ring shows under it once it
+  is down, so it can be seen on the sand.
+- Stalking. It walks at the crab at 130 uu/s. The crab walks at 250 to 450, so a crab that moves always outruns it.
+- Lunge and catch. Within 150 uu of a crab that is outside a burrow and standing still (speed at most 40 uu/s), or in
+  water over 60 uu deep, where its speed is cut, the gull lunges for 0.6 s and, if the crab is still in reach and
+  still not moving, catches it. A lunge that finds the crab walking, or dug in, is off. A moving crab and a crab in a
+  burrow are never caught.
+- It goes. It gives up after 40 s on the hunt, or when the crab has been in a burrow for 5 s while it is down, or when
+  scared, and flies off for 6 s. The next gull waits for the cooldown.
+
+The answers, neither of which needs speed:
+
+- BURROW. One click: the crab walks to the safest burrow (moving all the way, so it cannot be caught) and digs in, and
+  five seconds later the gull gives up. Press it when the gull has landed, or feed on while it is still far.
+- Dance. A crab that dances while a stalking gull is within 900 uu scares it: after 4 s of dance the gull flies off and
+  does not come back for 60 s. The gull keeps walking while the crab dances and a dancing crab stands still, so the
+  dance must be under way early: it works if the gull has 4 s of walking left before it is within 150 uu, that is,
+  begun while the gull is still more than about 700 uu away. Begun later, the gull reaches the crab first and catches it.
+
+The warning. When a gull begins circling the HUD shows a "Gull!" banner, top left, with a line for what it is doing ("It
+is circling.", "It has landed.", "It is coming. Press BURROW."), and a big arrow at the edge of the view pointing toward
+it with its distance in metres. It works when the gull is off screen, which it mostly is: the camera shows about 640 uu
+to each side and 1000 ahead. The arrow keeps clear of the tide gauge, the food bar, the pips, the buttons and the help
+line (a pure function, `CrabHud::GullArrowBox`), clear of the gull when it is on screen, and is not clickable. The
+help line says what to do ("Gull! Press BURROW, or dance.", "Gull outside. Stay in until it goes."). There is no sound
+yet: no sound asset exists, and nothing was fetched.
+
+Look. Stand-ins built from engine shapes, like the crab: a white body, head and tail, grey wings with dark tips that
+flap in the air and fold on the ground, an orange bill and legs, eyes, a soft shadow on the ground (smaller the higher
+it flies) and the ring. It walks with a bob, leans in to stalk and drops its head to lunge. About 240 uu long, so it
+reads at 1280 by 720.
+
+Logs and switches. Events `gull_circling`, `gull_landed`, `gull_stalking`, `gull_scared`, `gull_left` (with a reason)
+and `gull_catch`, then `round_eaten`, and a `CRABSIM_GULL` line while one is about. `CrabSim.Gulls 0` keeps gulls away
+(the tours and the older live scenarios run with it); `CrabSim.GullForce 1` (test only, off by default) sends a gull as
+soon as there is none and the crab is out of its burrow.
+
+Balance. The aim: a crab that answers its gulls is caught rarely, one that ignores them usually, and answering costs
+little pace. Measured two ways, with the numbers as they stand in `CrabGull::Tuning`:
+
+- A fast headless simulation of the real state machine against a crab that plays like the playtest bot
+  (`Tests/CrabGullBalanceTests.cpp`, 400 rounds of 600 s each): a crab that presses BURROW when a gull lands (feeding on
+  with a far gull half the time, until it is within 700 uu) was caught in 0 rounds, meeting about 5.6 gulls a round and
+  spending about 84 s of it answering; one that ignored them was caught in all 400, on average at 166 s.
+- The live playtest bot at the default tide, no cheats. Answering with BURROW: two full rounds, each 4 gulls met and 4
+  answered, no catch, fully grown in 10:03 and 10:04 (9:56 with no gulls: the answer overlaps the time the crab
+  sits out the high water anyway). Ignoring gulls, `PLAYTEST_GULLS=ignore PLAYTEST_ROUNDS=6`: eaten in 6 rounds of 6,
+  every time by the first gull, 2:50 to 3:10 into the round (the first circle comes about 2:19 in: the crab is in a
+  burrow for the first high water, and needs 25 s of open low water first).
+
+The numbers that pace it: `LandEatSeconds` (9 s, and with the circle and the glide it makes the 25 s of warning even
+when the crab walks right up to a landed gull), `StalkSpeed` (130), `GiveUpSeconds` (40), the spawn timers
+(`FirstMinute`, `OutsideSeconds`, `Cooldown`) and `EatRate` (what a gull costs the crab in food).
 
 ## Input model
 
@@ -177,14 +252,16 @@ Pointer-first. Nothing requires a key, the wheel, or a timing window.
 - Left click the HUD's dig button: dig a new burrow where the crab stands. A big target, no key, no timing.
 - Left click the HUD's molt button, in a burrow: molt for ten seconds. Same size, above the dig button. Click
   elsewhere to leave and cancel.
-- Left click NEW ROUND on the results panel: start again.
-- Left click the crab: dance on or off.
+- Left click NEW ROUND on the results panel: start again (after a win, or after being eaten).
+- Left click the crab: dance on or off. Begun early enough, a dance scares off a gull.
+- A gull: no input of its own. The BURROW button is the answer, a dance begun in time the second. The banner and arrow
+  are drawn only: neither takes a click, and a click under the arrow is an ordinary click.
 - Right click: dash toward the cursor, 1.2 s cooldown.
 - Camera is fixed-angle and follows the crab. No rotation, no zoom.
 - The help is a dark panel, bottom left, in two lines at least 16 px tall ("Click: walk. Hold: follow." and
   "Right click: dash. Click crab: dance."). After the first minute of a round it gives way to one short hint for what
-  the crab is doing ("Click elsewhere to come out.", "Molting. Click elsewhere to cancel." or "Click: walk. Right
-  click: dash."). It stays clear of the grip and food bars and the molts pips, and is not shown while the results panel is up.
+  the crab is doing ("Click elsewhere to come out.", "Molting. Click elsewhere to cancel.", "Click: walk. Right
+  click: dash.", and with a gull down "Gull! Press BURROW, or dance." or, in a burrow, "Gull outside. Stay in until it goes."). It stays clear of the grip and food bars and the molts pips, and is not shown while the results panel is up.
 
 The dash is on the right button, not a drag, because a held left button already means "follow the cursor".
 Drag and hold are the same gesture there. Pinch is not built yet and will get a button that is not left click.
@@ -207,12 +284,13 @@ sand that darkens at the waterline. Contract and pipeline in `Art/README.md`.
    seconds. (The first low water only gets the store to about 0.7: the first molt is in the second one.)
 2. Rising tide: retreat, choose a hole, hold it. A flood that catches a molt leaves the crab soft.
 3. High tide: sit it out in a high burrow, rest, dance, molt if fed enough.
-4. Repeat until the third molt. The round is won at three: the results panel, best time, NEW ROUND. Nothing eats
-   the crab yet, so there is no losing state.
+4. All the while, a gull: when the crab has been out in the open at low water long enough one circles, lands (and eats
+   a patch) and stalks. Hide in a burrow (BURROW) or dance early and it goes. A crab that stands still in the open
+   with the gull at its feet is eaten and the round is lost.
+5. Repeat until the third molt. The round is won at three: the results panel, best time, NEW ROUND.
 
 ## Open questions
 
-- What does dancing do? What eats you (gulls)?
 - Hunger has no teeth. Low food gates digging and molting. Should it also slow the crab or weaken its grip?
 - Pinch: a button that is not left click. Right click is the dash.
-- Tone: deadpan nature documentary, or full chaos?
+- Gulls have no voice or art yet: a screech when one starts circling, and a real animated gull, wait for assets.

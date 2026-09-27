@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CrabPlayerController.h"
 #include "CrabBeach.h"
+#include "CrabGull.h"
 #include "CrabHudMath.h"
 #include "CrabPawn.h"
 #include "CrabPickMath.h"
@@ -8,6 +9,7 @@
 #include "CrabSim.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
 #include "InputCoreTypes.h"
 #include "Math/Plane.h"
@@ -280,6 +282,13 @@ void ACrabPlayerController::LogScreenPositions(float DeltaTime)
 	const FVector2D BurrowCentre = CrabHud::BurrowButtonRect(ViewX, ViewY).GetCenter();
 	Line += FString::Printf(TEXT(" dig=%.0f,%.0f molt=%.0f,%.0f newround=%.0f,%.0f gofood=%.0f,%.0f goburrow=%.0f,%.0f"),
 		DigCentre.X, DigCentre.Y, MoltCentre.X, MoltCentre.Y, NewRoundCentre.X, NewRoundCentre.Y, FoodCentre.X, FoodCentre.Y, BurrowCentre.X, BurrowCentre.Y);
+	// Where a gull that is coming is on screen (its body), when it is in front of the camera.
+	TActorIterator<ACrabGull> GullIt(GetWorld());
+	FVector2D GullPixel;
+	if (GullIt && GullIt->IsWarned() && ProjectWorldLocationToScreen(GullIt->GetActorLocation() + FVector(0.f, 0.f, 60.f), GullPixel, false))
+	{
+		Line += FString::Printf(TEXT(" gull=%.0f,%.0f"), GullPixel.X, GullPixel.Y);
+	}
 	UE_LOG(LogCrabSim, Log, TEXT("%s"), *Line);
 }
 

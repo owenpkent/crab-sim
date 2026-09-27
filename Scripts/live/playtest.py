@@ -6,6 +6,10 @@ tide, which is a known cosine.
 
 The policy, in the order it is checked each tick (a quarter of a second):
   1. Molting: sit still. Leave only if the sea will flood the burrow before the molt is done.
+  1b. A gull is down (landing, stalking or lunging): press BURROW and hide until it has gone, two seconds longer. A
+     crab that is feeding sifts on while the gull is more than 700 uu away, on every other gull, and answers when it
+     comes nearer. PLAYTEST_GULLS=ignore plays as if there were no gulls at all (the balance check for a crab that
+     never looks up).
   2. The sea is coming at the crab (it will be 40 uu deep over the spot in 4 s): go on to a higher patch if one
      is close (6 s) and clear for 20 s, else to the nearest burrow that stays dry long enough, and from there to the high burrow the
      sea never floods.
@@ -29,15 +33,19 @@ pointer glides between targets on eased curves like tour.py's. Nothing here chec
 say whether the round finished.
 
 Usage: playtest.py <game log> <output dir> [game pid] [--sync]   (see tour.py; record.sh runs it with RECORD_TOUR=playtest)
-Run the game at the default tide: CrabSim.StateLog 1, no CrabSim.TideSpeed, no FoodFloor or StartFood.
+Run the game at the default tide: CrabSim.StateLog 1, no CrabSim.TideSpeed, no FoodFloor or StartFood. Gulls are on.
 
 Environment: PLAYTEST_CAP (real seconds before it gives up, default 1200), PLAYTEST_SHOTS (folder for the
-screenshots, default the output dir), PLAYTEST_TIDE_SPEED (the tide's speed when it is not 1).
+screenshots, default the output dir), PLAYTEST_TIDE_SPEED (the tide's speed when it is not 1), PLAYTEST_GULLS
+(answer, the default, or ignore) and PLAYTEST_ROUNDS (how many rounds to play, default 1: a round ended by a gull is
+followed by NEW ROUND and another; PLAYTEST_CAP counts for the whole run).
 
 Writes to <output dir>: clicks.csv (one row per click), playtest.log (what it decided and why) and the screenshots
-1-first-feeding, 2-first-dig-done, 3-first-molt, 4-high-tide-in-burrow, 5-results (.png, 1280x720 by Scripts/shot.sh).
+1-first-feeding, 2-first-dig-done, 3-first-molt, 4-high-tide-in-burrow, 5-results (the panel, won or eaten), and for the
+first gull gull-1-circling, gull-2-landed, gull-3-near, and gull-4-flying-in-view and gull-5-walking-in-view when the gull is on
+screen (.png, 1280x720 by Scripts/shot.sh).
 
-Exit code: 0 the round finished, 1 it did not (cap or crash of a rule), 3 the run could not proceed.
+Exit code: 0 the last round finished (fully grown or eaten), 1 it did not (cap or crash of a rule), 3 the run could not proceed.
 """
 import csv
 import math
@@ -90,6 +98,13 @@ BUTTON_RANGE = 3500.0      # uu: BURROW takes the highest floor within this, els
 IDLE_RESET = 45.0          # s of nothing to do at low tide, after which the patches are assumed fresh
 STUCK_SECONDS = 6.0        # a walk that has not moved the crab 15 uu in this long is stuck
 CAP = float(os.environ.get("PLAYTEST_CAP") or 1200.0)
+GULLS = (os.environ.get("PLAYTEST_GULLS") or "answer").strip().lower()   # "answer" or "ignore"
+ROUNDS = max(1, int(os.environ.get("PLAYTEST_ROUNDS") or 1))
+GULL_THREAT = ("Landing", "Stalking", "Lunging")   # the phases in which a gull is down and coming
+GULL_FEED_ON = 700.0       # uu: on every other gull a crab that is feeding sifts on until the gull is this near
+GULL_HOLD = 2.0            # s a crab in its burrow waits after the gull was last down
+GULL_NEED = 12.0           # s a burrow must stay dry after arrival to be a hiding place from a gull
+GULL_FRESH = 0.7           # s: a gull line older than this means the gull is gone
 TICK = 0.25
 FAR = 999.0
 
@@ -106,7 +121,9 @@ GOTO_BUTTON = {"patches": "gofood", "burrows": "goburrow"}
 GOTO_EVENT = {"patches": "goto_food", "burrows": "goto_burrow"}
 LABEL = {"dig": "DIG", "molt": "MOLT", "gofood": "FOOD", "goburrow": "BURROW"}
 SHOT_NAMES = {"feeding": "1-first-feeding", "dig": "2-first-dig-done", "molt": "3-first-molt",
-              "high": "4-high-tide-in-burrow", "results": "5-results"}
+              "high": "4-high-tide-in-burrow", "results": "5-results", "gull_circling": "gull-1-circling",
+              "gull_landed": "gull-2-landed", "gull_near": "gull-3-near", "gull_air": "gull-4-flying-in-view",
+              "gull_ground": "gull-5-walking-in-view"}
 
 
 # ---- the tide, as a function of the game clock ----
@@ -168,6 +185,14 @@ class PlayTest(Tour):
         self.watch = (0.0, 0.0, 0.0)      # wall time, x, y when the crab last moved
         self.snap_due = {}
         self.snap_done = set()
+        self.round_t0 = 0.0               # game time at which the tide clock last started from low water (each round's start)
+        self.round_no = 1
+        self.outcomes = []                # "won" or "eaten" for each round played
+        self.gull_count = 0               # the newest gull's number this round, as the game counts them
+        self.gulls_met = 0                # gulls seen over the whole run, and how many the bot answered with BURROW
+        self.gull_answers = 0
+        self.gull_seen_t = -999.0         # shifted game time a gull was last down
+        self.gull_goal = False            # the crab is on its way to a burrow because of a gull
         self.shots = os.environ.get("PLAYTEST_SHOTS") or out_dir
         os.makedirs(self.shots, exist_ok=True)
         self.csv = open(os.path.join(out_dir, "clicks.csv"), "w", newline="")
@@ -312,7 +337,7 @@ class PlayTest(Tour):
         chosen = event_detail(found, ONE[kind]) if found is not None and found.name == GOTO_EVENT[kind] else None
         chosen = None if chosen is None else int(chosen)
         if chosen is None or not (chosen in self.burrow_at if kind == "burrows" else 0 <= chosen < len(PATCHES)):
-            self.refused[name] = self.now_t()
+            self.refused[name] = self.now_t() - self.round_t0
             if found is None:
                 reason = "no answer from the game"
             elif found.name == "goto_refused":
@@ -382,7 +407,8 @@ class PlayTest(Tour):
             self.ev_i += 1
             note = e.name in ("surge_begin", "swept_out", "flooded_out", "soft_begin", "soft_end", "molt_refused",
                               "molt_cancel", "molt_done", "dig_begin", "dig_cancel", "dig_done", "molt_begin", "food_begin",
-                              "food_end", "burrow_enter", "burrow_exit", "round_won")
+                              "food_end", "burrow_enter", "burrow_exit", "round_won", "round_eaten", "gull_circling",
+                              "gull_landed", "gull_stalking", "gull_scared", "gull_left", "gull_catch")
             if e.name == "food_begin":
                 patch, richness = event_detail(e, "patch"), event_detail(e, "richness")
                 if patch is not None and richness is not None:
@@ -404,8 +430,13 @@ class PlayTest(Tour):
                 self.snap_later("molt", 4.0)
             elif e.name in ("molt_done", "molt_cancel", "flooded_out"):
                 self.molting = False
-            elif e.name == "round_won":
+            elif e.name in ("round_won", "round_eaten"):
                 self.snap_later("results", 2.0)
+            elif e.name == "gull_circling":
+                self.gulls_met += 1
+                self.snap_later("gull_circling", 2.0)
+            elif e.name == "gull_landed":
+                self.snap_later("gull_landed", 1.5)
             if note:
                 self.say("event %s (game t=%.1f) %s" % (e.name, e.t, e.rest))
         for i, (px, py, full) in enumerate(PATCHES):
@@ -413,6 +444,14 @@ class PlayTest(Tour):
                 self.rich[i] = full        # the sea has soaked it: fresh once it leaves
         if s.tide is not None and s.tide >= 0.995 and s.burrow is not None and s.burrow >= 0:
             self.snap("high")
+        gull = self.gull_now(s)
+        if gull is not None and gull.phase in ("Stalking", "Lunging") and gull.dist <= 900.0:
+            self.snap("gull_near")
+        # The gull itself, when the camera shows it (the game logs its pixel), in the air or on the sand.
+        screens = self.tail.screens
+        if gull is not None and screens and screens[-1].gull and (s.t + self.round_t0) - screens[-1].t < 1.0 \
+                and in_view(screens[-1].gull, screens[-1].view, 80):
+            self.snap("gull_air" if gull.alt > 20.0 else "gull_ground")
         for key, due in list(self.snap_due.items()):
             if time.time() >= due:
                 del self.snap_due[key]
@@ -437,6 +476,46 @@ class PlayTest(Tour):
             self.watch = (time.time(), s.x, s.y)
             return False
         return time.time() - wall > STUCK_SECONDS
+
+    # ---- gulls ----
+    def gull_now(self, s):
+        """The gull the game is logging now (its newest CRABSIM_GULL line is fresh), or None. A gull's game time is the
+        game's own clock, s.t here has the round's start taken off."""
+        g = self.tail.latest_gull()
+        if g is None or (s.t + self.round_t0) - g.t > GULL_FRESH:
+            return None
+        self.gull_count = g.count
+        return g
+
+    def gull_holds(self, s):
+        """True while a crab in its burrow should stay: a gull is down, or was a moment ago."""
+        if GULLS != "answer":
+            return False
+        g = self.gull_now(s)
+        if g is not None and g.phase in GULL_THREAT:
+            self.gull_seen_t = s.t
+        return s.t - self.gull_seen_t < GULL_HOLD
+
+    def answer_gull(self, s):
+        """Out in the open with a gull down: press BURROW (a hop to the nearest safe burrow when the button will not),
+        after sifting on with a far gull when the crab is feeding, on every other gull. True when it took the tick."""
+        g = self.gull_now(s)
+        if g is None or g.phase not in GULL_THREAT:
+            self.gull_goal = False
+            return False
+        self.gull_seen_t = s.t
+        feeding = s.feeding is not None and s.feeding >= 0
+        if feeding and g.count % 2 == 1 and g.dist > GULL_FEED_ON:
+            return False                      # a far gull: sift on, and look again next tick
+        if self.gull_goal and self.goal and self.goal[0] == "burrows" and s.target is not None:
+            return True                       # on the way already
+        self.gull_answers += 1
+        self.say("GULL %d is %s, %.0f uu away: BURROW" % (g.count, g.phase.lower(), g.dist))
+        self.gull_goal = True
+        if not self.press_goto("burrows", s, "a gull is down"):
+            safe = self.safe_burrows(s, GULL_NEED)
+            self.go("burrows", safe[0][1] if safe else self.refuge(s), "a gull is down")
+        return True
 
     # ---- the rules ----
     def safe_burrows(self, s, need):
@@ -572,7 +651,10 @@ class PlayTest(Tour):
                 self.go("burrows", self.refuge(s), "flood before the molt is done")
             return
         if inside:
+            self.gull_goal = False
             return self.step_inside(s)
+        if GULLS == "answer" and self.answer_gull(s):
+            return
         moving = self.moving(s)
         if self.sea_threat(s):
             options = [o for o in self.patch_options(s)      # a higher patch close by, that the sea has not reached yet
@@ -657,6 +739,8 @@ class PlayTest(Tour):
         if dry < math.hypot(rx - s.x, ry - s.y) / WALK_SPEED + FLOOD_LEAD and s.burrow != refuge:
             self.go("burrows", refuge, "the sea will flood this hole in %.0f s" % dry)
             return
+        if self.gull_holds(s):
+            return
         options = self.patch_options(s)
         if options:
             self.idle_since = None
@@ -680,6 +764,7 @@ class PlayTest(Tour):
 
     # ---- the round ----
     def play(self):
+        """One round, from the bot's clock as it stands. "won" or "eaten" when the results panel comes up, None at the cap."""
         errors = 0
         while time.time() - self.began < CAP:
             self.tail.poll()
@@ -689,9 +774,10 @@ class PlayTest(Tour):
                 continue
             if not self.alive():
                 raise Abort("the game exited during the round")
+            s = s._replace(t=s.t - self.round_t0)      # the tide restarts with each round, so the bot's clock does
             self.absorb(s)
             if s.over:
-                return True
+                return "eaten" if s.eaten else "won"
             try:
                 self.step(s)
                 errors = 0
@@ -704,16 +790,53 @@ class PlayTest(Tour):
                 if errors > 20:
                     raise Abort("the rules keep failing")
             time.sleep(TICK)
-        return False
+        return None
 
-    def summary(self, won):
+    def linger(self, seconds):
+        """Watch the log for a while without playing (the results panel is up), so its screenshot is taken."""
+        end = time.time() + seconds
+        while time.time() < end:
+            self.tail.poll()
+            s = self.tail.latest()
+            if s is not None:
+                self.absorb(s._replace(t=s.t - self.round_t0))
+            time.sleep(0.2)
+
+    def new_round(self):
+        """Click NEW ROUND on the results panel and start the bot's memory over, with the new round's clock. False if it did not start."""
+        screen = self.fresh_screen()
+        pixel = screen.newround if screen else None
+        if pixel is None:
+            return False
+        self.point_at(pixel)
+        mark = self.mark()
+        self.click("newround", "start the next round")
+        limit = mark.t + 3.0
+        began = self.wait_for(lambda: self.find_event(mark.events, "round_new", limit), limit)
+        if began is None:
+            return False
+        self.round_t0 = began.t
+        self.round_no += 1
+        self.burrow_at = {i: (x, y, ground(x, y)) for i, (x, y) in enumerate(BURROWS)}
+        self.rich = [full for _, _, full in PATCHES]
+        self.goal, self.goal_hop, self.goal_button = None, False, False
+        self.refused, self.pending = {}, None
+        self.molting, self.dug, self.dig_walks, self.dig_plan = False, 0, 0, False
+        self.no_molt_until, self.idle_since, self.here_since, self.sift = 0.0, None, None, None
+        self.gull_goal, self.gull_seen_t = False, -999.0
+        self.wait_for(lambda: self.tail.latest() is not None and self.tail.latest().t > began.t + 0.3 and not self.tail.latest().over, began.t + 4.0)
+        self.say("ROUND %d begins (game time %.1f)" % (self.round_no, began.t))
+        return True
+
+    def summary(self):
         gaps = [b - a for a, b in zip([self.began] + self.click_times, self.click_times)]
         kinds, real = self.click_kinds, time.time() - self.began
         hops = sum(1 for k in kinds if k.endswith("_hop"))
         goto = sum(1 for k in kinds if k in ("gofood", "goburrow"))
-        self.say("SUMMARY won=%s clicks=%d hops=%d ground=%d goto_buttons=%d dig_presses=%d molt_presses=%d per_min=%.1f "
-                 "longest_gap=%.0f s misses=%d dug=%d real=%.0f s"
-                 % (won, len(kinds), hops, kinds.count("ground"), goto, kinds.count("dig"), kinds.count("molt"), len(kinds) * 60.0 / max(real, 1.0),
+        self.say("SUMMARY outcomes=%s rounds=%d eaten=%d gulls=%d gull_answers=%d clicks=%d hops=%d ground=%d goto_buttons=%d "
+                 "dig_presses=%d molt_presses=%d per_min=%.1f longest_gap=%.0f s misses=%d dug=%d real=%.0f s"
+                 % ("+".join(self.outcomes) or "none", len(self.outcomes), self.outcomes.count("eaten"), self.gulls_met, self.gull_answers,
+                    len(kinds), hops, kinds.count("ground"), goto, kinds.count("dig"), kinds.count("molt"), len(kinds) * 60.0 / max(real, 1.0),
                     max(gaps, default=0.0), len(self.misses), self.dug, real))
 
     def scenario_tour(self):
@@ -723,18 +846,24 @@ class PlayTest(Tour):
             self.place_abs(self.bounds[0] + 1010, self.bounds[1] + 610)
         self.sync_with_recorder()
         self.began = time.time()
-        self.beat("the round starts: default tide, no cheats")
-        won = self.play()
-        self.check(won, "the round finished (three molts, the results panel) within %.0f s" % CAP)
-        if won:
-            self.beat("three molts: the results panel")
-            end = time.time() + 6.0          # the panel stays up: its screenshot, and a moment of it on the clip
-            while time.time() < end:
-                self.tail.poll()
-                if self.tail.latest():
-                    self.absorb(self.tail.latest())
-                time.sleep(0.2)
-        self.summary(won)
+        self.beat("the round starts: default tide, no cheats, gulls %s" % ("answered with BURROW" if GULLS == "answer" else "ignored"))
+        result = None
+        for number in range(ROUNDS):
+            result = self.play()
+            if result is None:
+                break
+            self.outcomes.append(result)
+            self.say("ROUND %d over: %s (game time %.1f)" % (self.round_no, result, self.tail.latest().t - self.round_t0 if self.tail.latest() else 0.0))
+            if number + 1 < ROUNDS:
+                self.linger(3.0)             # the panel and its screenshot, then the next round
+                if not self.new_round():
+                    self.say("NEW ROUND did not start the next round")
+                    break
+        self.check(result is not None, "the round finished (fully grown, or eaten by a gull) within %.0f s" % CAP)
+        if result is not None:
+            self.beat("the results panel: %s" % ("fully grown" if result == "won" else "eaten by a gull"))
+            self.linger(6.0)                 # the panel stays up: its screenshot, and a moment of it on the clip
+        self.summary()
         self.finish()
 
 

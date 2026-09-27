@@ -188,6 +188,7 @@ MOLT_BUTTON_RE = re.compile(r"\smolt=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 NEW_ROUND_RE = re.compile(r"\snewround=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 GOFOOD_RE = re.compile(r"\sgofood=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 GOBURROW_RE = re.compile(r"\sgoburrow=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
+GULL_PIXEL_RE = re.compile(r"\sgull=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 READY_RE = re.compile(r"LogCrabSim:\s*CRABSIM_READY")
 PROBLEM_RE = re.compile(r"Fatal error|Ensure condition failed|Signal 11|SIGSEGV|Unhandled Exception")
 
@@ -196,9 +197,10 @@ State = namedtuple("State", "t x y z yaw speed target dash grip depth water tide
 Event = namedtuple("Event", "name t rest", defaults=("",))
 # view is (width, height) of the game viewport, crab is a pixel (or (-1, -1)), burrows and patches map index to a
 # pixel, dig, molt, newround, gofood and goburrow are the pixels at the middle of the HUD's dig button, molt button,
-# the results panel's new round button and the FOOD and BURROW buttons (or None).
-Screen = namedtuple("Screen", "t view crab burrows patches dig molt newround gofood goburrow",
-                    defaults=({}, None, None, None, None, None))
+# the results panel's new round button and the FOOD and BURROW buttons (or None), and gull is the pixel of a gull that is
+# coming (or None when there is none).
+Screen = namedtuple("Screen", "t view crab burrows patches dig molt newround gofood goburrow gull",
+                    defaults=({}, None, None, None, None, None, None))
 # A place in the log: the game time, and how many states and events had been read.
 Mark = namedtuple("Mark", "t states events state")
 # The gull: phase is Circling, Landing, Stalking, Lunging, Leaving or Caught, loc and alt place it, dist is uu to the
@@ -251,13 +253,15 @@ def parse_screen(line):
     again = NEW_ROUND_RE.search(m.group("rest"))
     food = GOFOOD_RE.search(m.group("rest"))
     hole = GOBURROW_RE.search(m.group("rest"))
+    seen = GULL_PIXEL_RE.search(m.group("rest"))
     return Screen(float(m.group("t")), (int(m.group("vw")), int(m.group("vh"))),
                   (float(m.group("cx")), float(m.group("cy"))), burrows, patches,
                   (float(dig.group("x")), float(dig.group("y"))) if dig else None,
                   (float(molt.group("x")), float(molt.group("y"))) if molt else None,
                   (float(again.group("x")), float(again.group("y"))) if again else None,
                   (float(food.group("x")), float(food.group("y"))) if food else None,
-                  (float(hole.group("x")), float(hole.group("y"))) if hole else None)
+                  (float(hole.group("x")), float(hole.group("y"))) if hole else None,
+                  (float(seen.group("x")), float(seen.group("y"))) if seen else None)
 
 
 def parse_gull(line):
