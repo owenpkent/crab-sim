@@ -7,11 +7,14 @@
 #include "CrabHudMath.h"
 #include "CrabMoltMath.h"
 #include "CrabPawn.h"
+#include "CrabPlayerController.h"
+#include "CrabStickMath.h"
 
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "HAL/IConsoleManager.h"
 
 namespace
 {
@@ -43,6 +46,10 @@ namespace
 	const FLinearColor GullArrow = FLinearColor(1.f, 0.78f, 0.15f, 1.f);
 	const FLinearColor GullArrowOutline = FLinearColor(0.f, 0.f, 0.f, 0.85f);
 	const FLinearColor EatenAccent = FLinearColor(0.92f, 0.5f, 0.4f, 1.f);
+	const FLinearColor OneStickOn = FLinearColor(0.55f, 0.8f, 0.25f, 0.95f);
+	const FLinearColor OneStickOff = FLinearColor(0.4f, 0.4f, 0.4f, 0.9f);
+	const FLinearColor StickItemFill = FLinearColor(0.14f, 0.14f, 0.16f, 0.88f);
+	const FLinearColor StickCursorFill = FLinearColor(0.98f, 0.78f, 0.3f, 0.98f);
 }
 
 void ACrabHUD::DrawHUD()
@@ -88,6 +95,19 @@ void ACrabHUD::DrawHUD()
 	if (Crab->IsRoundOver())
 	{
 		DrawResults(*Crab, Scale);
+	}
+
+	// Whatever the CVar says: the toggle is how a stick-only player turns this on in the first place.
+	DrawOneStickToggle(Scale);
+	const IConsoleVariable* OneStickCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("CrabSim.OneStick"));
+	if (OneStickCVar && OneStickCVar->GetInt() != 0)
+	{
+		// Still drawn once the round is over: the menu falls back to just NEW ROUND (CrabStick::ActiveItemCount),
+		// standing in for the results panel's own button so a stick-only player can start the next round.
+		if (const ACrabPlayerController* PC = Cast<ACrabPlayerController>(PlayerOwner))
+		{
+			DrawOneStickPanel(*PC, Scale, Crab->IsRoundOver());
+		}
 	}
 }
 
@@ -421,7 +441,9 @@ void ACrabHUD::DrawMessage(const ACrabPawn& Crab, float Scale, const TArray<FStr
 void ACrabHUD::DrawHints(const ACrabPawn& Crab, bool bGullDown, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
-	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting(), Crab.IsRoundOver(), bGullDown);
+	const IConsoleVariable* OneStickCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("CrabSim.OneStick"));
+	const bool bOneStick = OneStickCVar && OneStickCVar->GetInt() != 0;
+	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting(), Crab.IsRoundOver(), bGullDown, bOneStick);
 	if (Hint.First.IsEmpty())
 	{
 		return;
@@ -542,4 +564,91 @@ void ACrabHUD::DrawGullWarning(const ACrabPawn& Crab, const ACrabGull& Gull, flo
 	const FVector2D TextAt(Box.GetCenter().X - DistanceW * 0.5f, Box.GetCenter().Y + 32.f * Scale);
 	DrawRect(Panel, TextAt.X - 6.f * Scale, TextAt.Y - 2.f * Scale, DistanceW + 12.f * Scale, DistanceH + 4.f * Scale);
 	DrawText(Distance, Text, TextAt.X, TextAt.Y, Font, Scale * 1.1f);
+}
+
+void ACrabHUD::DrawOneStickToggle(float Scale)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	const IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("CrabSim.OneStick"));
+	const bool bOn = CVar && CVar->GetInt() != 0;
+	const FBox2D Rect = CrabHud::OneStickButtonRect(Canvas->SizeX, Canvas->SizeY);
+	const FVector2D Size = Rect.GetSize();
+	const float Edge = 3.f * Scale;
+	DrawRect(Border, Rect.Min.X - Edge, Rect.Min.Y - Edge, Size.X + 2.f * Edge, Size.Y + 2.f * Edge);
+	DrawRect(bOn ? OneStickOn : OneStickOff, Rect.Min.X, Rect.Min.Y, Size.X, Size.Y);
+
+	const FString Label = bOn ? TEXT("ONE STICK: ON") : TEXT("ONE STICK: OFF");
+	float LabelW = 0.f;
+	float LabelH = 0.f;
+	GetTextSize(Label, LabelW, LabelH, Font, Scale * 0.95f);
+	DrawText(Label, bOn ? ButtonInk : Text, Rect.Min.X + (Size.X - LabelW) * 0.5f, Rect.Min.Y + (Size.Y - LabelH) * 0.5f, Font, Scale * 0.95f);
+}
+
+void ACrabHUD::DrawOneStickPanel(const ACrabPlayerController& PC, float Scale, bool bRoundOver)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	const float ViewW = Canvas->SizeX;
+	const float ViewH = Canvas->SizeY;
+	const int32 ItemCount = CrabStick::ActiveItemCount(bRoundOver);
+	const CrabStick::EMode Mode = PC.GetOneStickMode();
+
+	// The cursor and its highlight only mean anything in MENU: STEER hides the column so it does not
+	// sit in the way of the view the player is driving by. The round ending always forces MENU (see
+	// FMenuState), so NEW ROUND is never hidden behind STEER.
+	if (Mode == CrabStick::EMode::Menu)
+	{
+		const CrabStick::EMenuItem Cursor = PC.GetOneStickCursor();
+		for (int32 Index = 0; Index < ItemCount; ++Index)
+		{
+			const CrabStick::EMenuItem Item = CrabStick::ActiveItemAt(bRoundOver, Index);
+			const FBox2D Rect = CrabHud::StickMenuItemRect(ViewW, ViewH, Index);
+			const FVector2D Size = Rect.GetSize();
+			const bool bHighlighted = Item == Cursor;
+			const float Edge = 3.f * Scale;
+			DrawRect(Border, Rect.Min.X - Edge, Rect.Min.Y - Edge, Size.X + 2.f * Edge, Size.Y + 2.f * Edge);
+			DrawRect(bHighlighted ? StickCursorFill : StickItemFill, Rect.Min.X, Rect.Min.Y, Size.X, Size.Y);
+
+			const FString Label = CrabStick::ItemLabel(Item);
+			float LabelW = 0.f;
+			float LabelH = 0.f;
+			GetTextSize(Label, LabelW, LabelH, Font, Scale * 1.4f);
+			DrawText(Label, bHighlighted ? ButtonInk : Text, Rect.Min.X + 18.f * Scale, Rect.Min.Y + (Size.Y - LabelH) * 0.5f, Font, Scale * 1.4f);
+		}
+	}
+
+	const FBox2D Banner = CrabHud::StickModeBannerRect(ViewW, ViewH, ItemCount);
+	const FVector2D BannerSize = Banner.GetSize();
+	DrawRect(Panel, Banner.Min.X, Banner.Min.Y, BannerSize.X, BannerSize.Y);
+	// Two lines at a readable size: one line had to shrink to fit the column's width.
+	const FString BannerFirst = bRoundOver ? TEXT("Left/right or click:")
+		: (Mode == CrabStick::EMode::Menu ? TEXT("Up/down: move. Left/right: pick.") : TEXT("STEER"));
+	const FString BannerSecond = bRoundOver ? TEXT("NEW ROUND")
+		: (Mode == CrabStick::EMode::Menu ? TEXT("Triple-tap: steer.") : TEXT("Triple-tap: menu."));
+	float FirstW = 0.f;
+	float FirstH = 0.f;
+	float BannerScale = Scale * 1.05f;
+	GetTextSize(BannerFirst, FirstW, FirstH, Font, BannerScale);
+	BannerScale *= FMath::Min(1.f, (BannerSize.X - 16.f * Scale) / FMath::Max(FirstW, 1.f));
+	GetTextSize(BannerFirst, FirstW, FirstH, Font, BannerScale);
+	const float LineTop = Banner.Min.Y + (BannerSize.Y - 2.f * FirstH) * 0.5f;
+	DrawText(BannerFirst, Text, Banner.Min.X + 8.f * Scale, LineTop, Font, BannerScale);
+	DrawText(BannerSecond, Text, Banner.Min.X + 8.f * Scale, LineTop + FirstH, Font, BannerScale);
+
+	// The chain pips: how many taps have built up toward the third, which always fires a triple tap.
+	const int32 ChainCount = PC.GetOneStickChainCount();
+	FBox2D LastPip = Banner;
+	for (int32 Index = 0; Index < 3; ++Index)
+	{
+		const FBox2D Pip = CrabHud::StickChainPipRect(ViewW, ViewH, ItemCount, Index);
+		const FVector2D PipSize = Pip.GetSize();
+		const float Edge = 2.f * Scale;
+		DrawRect(Border, Pip.Min.X - Edge, Pip.Min.Y - Edge, PipSize.X + 2.f * Edge, PipSize.Y + 2.f * Edge);
+		DrawRect(Index < ChainCount ? PipEarned : PipEmpty, Pip.Min.X, Pip.Min.Y, PipSize.X, PipSize.Y);
+		LastPip = Pip;
+	}
+	const FString PipLabel = FString::Printf(TEXT("%d of 3 taps"), ChainCount);
+	float PipLabelW = 0.f;
+	float PipLabelH = 0.f;
+	GetTextSize(PipLabel, PipLabelW, PipLabelH, Font, Scale * 1.15f);
+	DrawText(PipLabel, Text, LastPip.Max.X + 14.f * Scale, LastPip.Min.Y + (LastPip.GetSize().Y - PipLabelH) * 0.5f, Font, Scale * 1.15f);
 }

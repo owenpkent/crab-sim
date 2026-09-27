@@ -3,6 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "CrabStickMath.h"
 #include "CrabPlayerController.generated.h"
 
 class ACrabPawn;
@@ -30,6 +31,10 @@ struct FCrabPointer
  * - Click the new round button on the results panel: start again.
  * - Click the crab: start or stop its dance.
  * - Right click: dash toward the cursor.
+ *
+ * With CrabSim.OneStick 1, every step above is replaced except the buttons and right click: the left
+ * stick and left click instead drive a MENU/STEER scheme for a player with no other input. See GAME.md,
+ * "One-stick mode", and CrabStickMath.h for the pure rules.
  */
 UCLASS()
 class CRABSIM_API ACrabPlayerController : public APlayerController
@@ -81,11 +86,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|Input")
 	float BurrowClickRadius = 100.f;
 
+	/** How far ahead of the crab STEER aims its walk target, uu. Past ArrivalRadius, so it never arrives and stops. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|OneStick")
+	float OneStickSteerAheadDistance = 400.f;
+
+	/** How far ahead of the crab the MENU's DASH item aims TryDash, uu. Only the direction matters to TryDash. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|OneStick")
+	float OneStickDashAheadDistance = 300.f;
+
 	/**
 	 * Where a world point is on screen. Empty means the player's own camera. A test world has no viewport, so
 	 * tests put a camera of their own here.
 	 */
 	TFunction<bool(const FVector&, FVector2D&)> ProjectToView;
+
+	// --- One-stick mode, for the HUD -------------------------------------------------------------------
+
+	CrabStick::EMode GetOneStickMode() const { return MenuState.GetMode(); }
+	CrabStick::EMenuItem GetOneStickCursor() const { return MenuState.GetCursor(); }
+	/** Taps in the open chain, 0 to 2, for the HUD's pips. */
+	int32 GetOneStickChainCount() const { return MenuState.GetChainCount(); }
 
 private:
 	/** With CrabSim.StateLog on, logs where the crab and each burrow are on screen, so live tests can click them. */
@@ -104,4 +124,24 @@ private:
 	float ZoneScore(const FVector& Target, float WorldRadius, const FVector& Point, const FCrabPointer* Pointer) const;
 
 	void ResolveTarget(const ACrabPawn& Crab, const FVector& Point, const FCrabPointer* Pointer, FVector& OutTarget, int32& OutBurrow, int32& OutPatch) const;
+
+	// --- One-stick mode ---------------------------------------------------------------------------------
+
+	/** Flips CrabSim.OneStick and logs onestick_on/off. GameUserSettings.ini is kept in step by a changed callback set up in BeginPlay. */
+	void ToggleOneStick();
+
+	/** Reads the stick and the click, steps the detectors and the menu state machine, dispatches a commit, drives STEER, and logs. */
+	void UpdateOneStick(ACrabPawn& Crab, float DeltaTime);
+
+	/** What committing an item does: the same as its HUD button, DANCE toggles, DASH dashes ahead. MOVE does nothing here: the menu state machine already entered STEER. */
+	void DispatchOneStickSelect(ACrabPawn& Crab, CrabStick::EMenuItem Item);
+
+	/** True if the pixel is on any button a mouse click must not also register as a one-stick tap for. */
+	bool IsOverOneStickHudControl(const FVector2D& ViewSize, const FVector2D& ScreenPos, bool bRoundOver) const;
+
+	void LogOneStickEvent(const TCHAR* Name, const FString& Detail = FString()) const;
+
+	CrabStick::FStickTapDetector StickTapDetector;
+	CrabStick::FClickTapDetector ClickTapDetector;
+	CrabStick::FMenuState MenuState;
 };

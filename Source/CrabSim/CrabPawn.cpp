@@ -384,6 +384,10 @@ const TCHAR* ACrabPawn::AnimName(ECrabAnim State)
 
 void ACrabPawn::SetMoveTarget(const FVector& WorldPoint, int32 EnterBurrowIndex, int32 FeedPatchIndex)
 {
+	// Every ordinary move order (a mouse click or hold, a go-to button, one-stick's MOVE select) starts at
+	// full speed. Only one-stick's STEER, every tick it actually steers, sets this back down again: nothing
+	// else must ever see a multiplier left over from it.
+	WalkSpeedMultiplier = 1.f;
 	// A crab in its burrow stays put until it is told to come out (ExitBurrow). A won round ignores every order.
 	if (IsInBurrow() || bRoundOver)
 	{
@@ -410,6 +414,7 @@ void ACrabPawn::ClearMoveTarget()
 	PendingBurrow = INDEX_NONE;
 	PendingPatch = INDEX_NONE;
 	TargetMarker->SetHiddenInGame(true);
+	WalkSpeedMultiplier = 1.f;
 }
 
 bool ACrabPawn::TryDash(const FVector& TowardWorldPoint)
@@ -1298,6 +1303,8 @@ void ACrabPawn::UpdateWalking(float DeltaSeconds)
 			// Ease in over the last stretch so the crab settles on the point instead of skidding past.
 			Speed = FMath::Min(Speed, DistanceToTarget * 5.f + 40.f);
 			Speed *= CrabSurvival::SpeedScaleForDepth(WaterDepth);
+			// 1 outside one-stick STEER: see SetMoveTarget and ClearMoveTarget, which are the only other places this changes.
+			Speed *= WalkSpeedMultiplier;
 		}
 
 		Move->MaxWalkSpeed = Speed;

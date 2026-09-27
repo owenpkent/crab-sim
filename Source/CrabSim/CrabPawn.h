@@ -57,6 +57,15 @@ public:
 	bool HasMoveTarget() const { return bHasTarget; }
 	FVector GetMoveTarget() const { return MoveTarget; }
 
+	/**
+	 * Scales ordinary walking speed, 0 to 1 (clamped): one-stick STEER sets this from how far the stick is
+	 * pushed (CrabStick::SteerSpeedMultiplier). SetMoveTarget and ClearMoveTarget both reset it to 1, so a
+	 * stale value can never leak into a mouse walk, a go-to walk, a dash (which has its own speed and never
+	 * reads this at all), or anything the tide or a gull does to the crab.
+	 */
+	void SetWalkSpeedMultiplier(float NewMultiplier) { WalkSpeedMultiplier = FMath::Clamp(NewMultiplier, 0.f, 1.f); }
+	float GetWalkSpeedMultiplier() const { return WalkSpeedMultiplier; }
+
 	/** Start a dash toward the point. False while dashing or on cooldown. Digs out of a burrow and stops a dance first. */
 	bool TryDash(const FVector& TowardWorldPoint);
 	bool IsDashing() const { return DashTimeRemaining > 0.f; }
@@ -314,6 +323,7 @@ private:
 	TArray<FVector> ClawBaseLocations;
 	FString Message;
 	FVector MoveTarget = FVector::ZeroVector;
+	float WalkSpeedMultiplier = 1.f;
 	FVector DashDirection = FVector::ForwardVector;
 	ECrabAnim AnimState = ECrabAnim::Idle;
 	bool bHasTarget = false;
