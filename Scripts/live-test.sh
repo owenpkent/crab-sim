@@ -37,9 +37,14 @@
 #          counted, no food spent); dig in again, molt to the end (molt_done after
 #          10 s, the crab stays put, 0.80 food paid, molts=1, scale 1.08, grip
 #          full); click elsewhere (burrow_exit, nothing cancelled). About a minute.
+#   goto   launched with CrabSim.StateLog 1,CrabSim.TideSpeed 0 (tide frozen at
+#          low water). In order: click the HUD's FOOD button (goto_food, the crab
+#          walks, food_begin on the nearest patch, food rising); click the BURROW
+#          button (goto_burrow, food_end, burrow_enter in the highest burrow); click
+#          BURROW again while dug in (goto_refused, no walk, still in). About a minute.
 #
 # Environment overrides:
-#   LIVE_SCENARIOS="basic tide forage molt"  which scenarios to run, in this order (space or
+#   LIVE_SCENARIOS="basic tide forage molt goto"  which scenarios to run, in this order (space or
 #                          comma separated). LIVE_SCENARIOS=tide runs only one.
 #   LIVE_TIDE_SPEED=<n>    CrabSim.TideSpeed for the tide scenario (default 3). Below 10
 #                          the session multiplies its tide time limits by 10/n.
@@ -70,7 +75,7 @@ export DISPLAY="${DISPLAY:-:0}"
 
 RESX="${LIVE_RESX:-1280}"
 RESY="${LIVE_RESY:-720}"
-SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt}"
+SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto}"
 SCENARIOS="${SCENARIOS//,/ }"
 TIDE_SPEED="${LIVE_TIDE_SPEED:-3}"
 [[ "$TIDE_SPEED" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "LIVE_TIDE_SPEED must be a number: $TIDE_SPEED" >&2; exit 2; }
@@ -84,6 +89,7 @@ exec_cmds_for() {
 		tide)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed $TIDE_SPEED" ;;
 		forage) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0" ;;
 		molt)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.FoodFloor 0.9" ;;
+		goto)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0" ;;
 		*)     return 1 ;;
 	esac
 }
@@ -116,7 +122,7 @@ wait_gone() {
 }
 
 for scn in $SCENARIOS; do
-	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt)." >&2; exit 2; }
+	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto)." >&2; exit 2; }
 done
 [ -n "${SCENARIOS// /}" ] || { echo "LIVE_SCENARIOS is empty." >&2; exit 2; }
 
