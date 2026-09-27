@@ -344,13 +344,34 @@ namespace CrabHud
 
 	/**
 	 * All the controls for the first minute of a round, then one short line for what the crab is doing, and what to do
-	 * about a gull that is down and coming (bGullDown). None while the results panel is up.
+	 * about a gull that is down and coming (bGullDown). None while the results panel is up. In one-stick mode
+	 * (bOneStick) a click is a tap, so the lines speak of the stick instead.
 	 */
-	inline FHintText HintText(float RoundSeconds, bool bInBurrow, bool bMolting, bool bRoundOver = false, bool bGullDown = false)
+	inline FHintText HintText(float RoundSeconds, bool bInBurrow, bool bMolting, bool bRoundOver = false, bool bGullDown = false, bool bOneStick = false)
 	{
 		if (bRoundOver)
 		{
 			return {FString(), FString()};
+		}
+		if (bOneStick)
+		{
+			if (RoundSeconds < FullHintSeconds)
+			{
+				return {TEXT("Triple-tap: menu or steer."), TEXT("A click counts as one tap.")};
+			}
+			if (bMolting)
+			{
+				return {TEXT("Molting. Steer to cancel."), FString()};
+			}
+			if (bInBurrow)
+			{
+				return {bGullDown ? TEXT("Gull outside. Stay in until it goes.") : TEXT("Steer to come out."), FString()};
+			}
+			if (bGullDown)
+			{
+				return {TEXT("Gull! Pick BURROW, or dance."), FString()};
+			}
+			return {TEXT("Triple-tap: menu or steer."), FString()};
 		}
 		if (RoundSeconds < FullHintSeconds)
 		{
@@ -378,5 +399,73 @@ namespace CrabHud
 	inline bool EchoesReason(const FString& Message, const FString& Reason)
 	{
 		return !Reason.IsEmpty() && Message.EndsWith(Reason, ESearchCase::IgnoreCase);
+	}
+
+	// --- One-stick mode -------------------------------------------------------------------------------
+
+	/** The ONE STICK toggle, top right: on however the game is being played, so a stick-only player can turn it on with a click. */
+	constexpr float OneStickButtonWidth = 240.f;
+	constexpr float OneStickButtonHeight = 50.f;
+
+	inline FBox2D OneStickButtonRect(float ViewWidth, float ViewHeight)
+	{
+		const float Scale = ScaleForHeight(ViewHeight);
+		const FVector2D Size(OneStickButtonWidth * Scale, OneStickButtonHeight * Scale);
+		const float Right = ViewWidth - 24.f * Scale;
+		const float Top = 20.f * Scale;
+		return FBox2D(FVector2D(Right - Size.X, Top), FVector2D(Right, Top + Size.Y));
+	}
+
+	inline bool HitsOneStickButton(float ViewWidth, float ViewHeight, const FVector2D& Pixel)
+	{
+		const float Margin = DigButtonHitMargin * ScaleForHeight(ViewHeight);
+		return OneStickButtonRect(ViewWidth, ViewHeight).ExpandBy(Margin).IsInside(Pixel);
+	}
+
+	/** The MENU column: a vertical stack of items, left of the middle, clear of the tide gauge, the hint panel and every other button. */
+	constexpr float StickMenuLeft = 200.f;
+	constexpr float StickMenuTop = 96.f;
+	constexpr float StickMenuItemWidth = 260.f;
+	constexpr float StickMenuItemHeight = 50.f;
+	constexpr float StickMenuItemGap = 6.f;
+
+	inline FBox2D StickMenuItemRect(float ViewWidth, float ViewHeight, int32 Index)
+	{
+		const float Scale = ScaleForHeight(ViewHeight);
+		const float Top = (StickMenuTop + Index * (StickMenuItemHeight + StickMenuItemGap)) * Scale;
+		const FVector2D Min(StickMenuLeft * Scale, Top);
+		return FBox2D(Min, Min + FVector2D(StickMenuItemWidth * Scale, StickMenuItemHeight * Scale));
+	}
+
+	/** The bottom of a column of this many stacked menu items, for whatever sits just under it. */
+	inline float StickMenuBottom(float ViewWidth, float ViewHeight, int32 ItemCount)
+	{
+		return StickMenuItemRect(ViewWidth, ViewHeight, FMath::Max(ItemCount - 1, 0)).Max.Y;
+	}
+
+	/** The mode banner ("MENU: ..." or "STEER: ..."), under the menu column so it never needs the column hidden to show. */
+	constexpr float StickBannerHeight = 64.f;
+	constexpr float StickBannerGap = 12.f;
+
+	inline FBox2D StickModeBannerRect(float ViewWidth, float ViewHeight, int32 ItemCount)
+	{
+		const float Scale = ScaleForHeight(ViewHeight);
+		const float Top = StickMenuBottom(ViewWidth, ViewHeight, ItemCount) + StickBannerGap * Scale;
+		const FVector2D Min(StickMenuLeft * Scale, Top);
+		return FBox2D(Min, Min + FVector2D(StickMenuItemWidth * Scale, StickBannerHeight * Scale));
+	}
+
+	/** One chain pip, under the mode banner: up to three, filling as the tap chain builds toward a triple tap. */
+	constexpr float StickPipSize = 32.f;
+	constexpr float StickPipGap = 10.f;
+	constexpr float StickPipTopGap = 10.f;
+
+	inline FBox2D StickChainPipRect(float ViewWidth, float ViewHeight, int32 ItemCount, int32 PipIndex)
+	{
+		const float Scale = ScaleForHeight(ViewHeight);
+		const FBox2D Banner = StickModeBannerRect(ViewWidth, ViewHeight, ItemCount);
+		const float Top = Banner.Max.Y + StickPipTopGap * Scale;
+		const float Left = StickMenuLeft * Scale + PipIndex * (StickPipSize + StickPipGap) * Scale;
+		return FBox2D(FVector2D(Left, Top), FVector2D(Left + StickPipSize * Scale, Top + StickPipSize * Scale));
 	}
 }

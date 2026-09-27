@@ -507,5 +507,76 @@ bool FCrabHudGullHintTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("molting comes first"), CrabHud::HintText(120.f, true, true, false, true).First.Contains(TEXT("cancel")));
 	TestTrue(TEXT("the results panel beats it"), CrabHud::HintText(120.f, false, false, true, true).First.IsEmpty());
 	TestTrue(TEXT("the first minute's full help is kept"), CrabHud::HintText(10.f, false, false, false, true).Second == CrabHud::HintText(10.f, false, false).Second);
+
+	// One-stick mode: a click is a tap there, so no line may tell the player to click the ground.
+	const CrabHud::FHintText StickFull = CrabHud::HintText(10.f, false, false, false, false, true);
+	TestTrue(TEXT("one stick: the first minute names the triple tap"), StickFull.First.Contains(TEXT("Triple-tap")));
+	TestFalse(TEXT("one stick: no mouse walk help"), (StickFull.First + StickFull.Second).Contains(TEXT("Click: walk")));
+	TestTrue(TEXT("one stick: steering brings it out"), CrabHud::HintText(120.f, true, false, false, false, true).First.Contains(TEXT("Steer")));
+	TestTrue(TEXT("one stick: steering cancels a molt"), CrabHud::HintText(120.f, true, true, false, false, true).First.Contains(TEXT("cancel")));
+	TestFalse(TEXT("one stick: no line says click elsewhere"), CrabHud::HintText(120.f, true, true, false, false, true).First.Contains(TEXT("Click"))
+		|| CrabHud::HintText(120.f, true, false, false, false, true).First.Contains(TEXT("Click")));
+	TestTrue(TEXT("one stick: the results panel still beats it"), CrabHud::HintText(120.f, false, false, true, true, true).First.IsEmpty());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudOneStickButtonTest, "CrabSim.Hud.OneStickButtonSitsTopRightClearOfTheGullBanner", TestFlags)
+bool FCrabHudOneStickButtonTest::RunTest(const FString& Parameters)
+{
+	const FIntPoint Views[] = {FIntPoint(1280, 720), FIntPoint(1920, 1080), FIntPoint(3840, 2160)};
+	for (const FIntPoint& View : Views)
+	{
+		const FBox2D Rect = CrabHud::OneStickButtonRect(View.X, View.Y);
+		TestTrue(*FString::Printf(TEXT("at %dx%d it is inside the view"), View.X, View.Y),
+			Rect.Min.X >= 0.f && Rect.Min.Y >= 0.f && Rect.Max.X <= View.X && Rect.Max.Y <= View.Y);
+		TestTrue(TEXT("in the right third"), Rect.GetCenter().X > View.X * 0.66f);
+		TestTrue(TEXT("in the top quarter"), Rect.GetCenter().Y < View.Y * 0.25f);
+		TestFalse(TEXT("clear of the gull banner"), Rect.Intersect(CrabHud::GullBannerRect(View.X, View.Y)));
+	}
+	TestTrue(TEXT("the centre hits"), CrabHud::HitsOneStickButton(1280, 720, CrabHud::OneStickButtonRect(1280, 720).GetCenter()));
+	TestFalse(TEXT("the middle of the view does not"), CrabHud::HitsOneStickButton(1280, 720, FVector2D(640.f, 360.f)));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudStickMenuLayoutTest, "CrabSim.Hud.StickMenuColumnStacksClearOfEverythingElse", TestFlags)
+bool FCrabHudStickMenuLayoutTest::RunTest(const FString& Parameters)
+{
+	constexpr int32 ItemCount = 7; // CrabStick::ActiveItemCount(false): the seven action items while a round is on
+	const FIntPoint Views[] = {FIntPoint(1280, 720), FIntPoint(1920, 1080), FIntPoint(3840, 2160)};
+	for (const FIntPoint& View : Views)
+	{
+		TArray<FBox2D> Rects;
+		for (int32 Index = 0; Index < ItemCount; ++Index)
+		{
+			const FBox2D Rect = CrabHud::StickMenuItemRect(View.X, View.Y, Index);
+			TestTrue(*FString::Printf(TEXT("item %d is inside the view at %dx%d"), Index, View.X, View.Y),
+				Rect.Min.X >= 0.f && Rect.Min.Y >= 0.f && Rect.Max.X <= View.X && Rect.Max.Y <= View.Y);
+			TestFalse(TEXT("clear of the tide gauge"), Rect.Intersect(CrabHud::TideGaugeRect(View.X, View.Y)));
+			TestFalse(TEXT("clear of the dig button"), Rect.Intersect(CrabHud::DigButtonRect(View.X, View.Y)));
+			TestFalse(TEXT("clear of the molt button"), Rect.Intersect(CrabHud::MoltButtonRect(View.X, View.Y)));
+			TestFalse(TEXT("clear of the food button"), Rect.Intersect(CrabHud::FoodButtonRect(View.X, View.Y)));
+			TestFalse(TEXT("clear of the burrow button"), Rect.Intersect(CrabHud::BurrowButtonRect(View.X, View.Y)));
+			TestFalse(TEXT("clear of the grip bar"), Rect.Intersect(CrabHud::GripBarRect(View.X, View.Y)));
+			TestFalse(TEXT("clear of the hint panel"), Rect.Intersect(CrabHud::HintPanelRect(View.X, View.Y)));
+			Rects.Add(Rect);
+		}
+		for (int32 Index = 1; Index < ItemCount; ++Index)
+		{
+			TestTrue(*FString::Printf(TEXT("item %d sits below item %d, at %dx%d"), Index, Index - 1, View.X, View.Y),
+				Rects[Index].Min.Y >= Rects[Index - 1].Max.Y);
+		}
+		const FBox2D Banner = CrabHud::StickModeBannerRect(View.X, View.Y, ItemCount);
+		TestTrue(*FString::Printf(TEXT("the banner sits under the column, at %dx%d"), View.X, View.Y), Banner.Min.Y >= Rects.Last().Max.Y);
+		TestFalse(TEXT("the banner is clear of the hint panel"), Banner.Intersect(CrabHud::HintPanelRect(View.X, View.Y)));
+
+		FBox2D Pips = CrabHud::StickChainPipRect(View.X, View.Y, ItemCount, 0);
+		for (int32 Index = 1; Index < 3; ++Index)
+		{
+			const FBox2D Pip = CrabHud::StickChainPipRect(View.X, View.Y, ItemCount, Index);
+			TestTrue(*FString::Printf(TEXT("pip %d sits right of pip %d, at %dx%d"), Index, Index - 1, View.X, View.Y), Pip.Min.X >= Pips.Max.X);
+			Pips = Pip;
+		}
+		TestFalse(TEXT("the pips are clear of the hint panel"), Pips.Intersect(CrabHud::HintPanelRect(View.X, View.Y)));
+	}
 	return true;
 }
