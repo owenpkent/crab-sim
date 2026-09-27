@@ -2,6 +2,7 @@
 #include "CrabHUD.h"
 #include "CrabBeach.h"
 #include "CrabDigMath.h"
+#include "CrabGotoMath.h"
 #include "CrabHudMath.h"
 #include "CrabMoltMath.h"
 #include "CrabPawn.h"
@@ -24,6 +25,10 @@ namespace
 	const FLinearColor DigOff = FLinearColor(0.22f, 0.22f, 0.22f, 0.8f);
 	const FLinearColor MoltReady = FLinearColor(0.4f, 0.72f, 0.88f, 0.95f);
 	const FLinearColor MoltBusy = FLinearColor(0.24f, 0.46f, 0.66f, 0.95f);
+	const FLinearColor FoodReady = FLinearColor(0.55f, 0.8f, 0.25f, 0.95f);
+	const FLinearColor BurrowReady = FLinearColor(0.74f, 0.62f, 0.9f, 0.95f);
+	const FLinearColor HintInk = FLinearColor(1.f, 1.f, 1.f, 1.f);
+	const FLinearColor HintPanel = FLinearColor(0.f, 0.f, 0.f, 0.8f);
 	const FLinearColor PipEarned = FLinearColor(0.98f, 0.78f, 0.3f, 1.f);
 	const FLinearColor PipEmpty = FLinearColor(0.1f, 0.1f, 0.1f, 0.7f);
 	const FLinearColor Gold = FLinearColor(1.f, 0.85f, 0.35f, 1.f);
@@ -52,13 +57,16 @@ void ACrabHUD::DrawHUD()
 	DrawGripBar(*Crab, Scale);
 	DrawFoodBar(*Crab, Scale);
 	DrawMoltPips(*Crab, Scale);
+	TArray<FString> ShownReasons;
 	if (!Crab->IsRoundOver())
 	{
-		DrawDigButton(*Crab, Scale);
-		DrawMoltButton(*Crab, Scale);
+		ShownReasons.Add(DrawDigButton(*Crab, Scale));
+		ShownReasons.Add(DrawMoltButton(*Crab, Scale));
+		ShownReasons.Add(DrawFoodButton(*Crab, Scale));
+		ShownReasons.Add(DrawBurrowButton(*Crab, Scale));
 	}
-	DrawMessage(*Crab, Scale);
-	DrawHints(Scale);
+	DrawMessage(*Crab, Scale, ShownReasons);
+	DrawHints(*Crab, Scale);
 	if (Crab->IsRoundOver())
 	{
 		DrawResults(*Crab, Scale);
@@ -68,10 +76,11 @@ void ACrabHUD::DrawHUD()
 void ACrabHUD::DrawTideGauge(const ACrabPawn& Crab, const ACrabBeach& Beach, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
-	const float GX = 30.f * Scale;
-	const float GY = Canvas->SizeY * 0.25f;
-	const float GW = 28.f * Scale;
-	const float GH = Canvas->SizeY * 0.4f;
+	const FBox2D Bar = CrabHud::TideGaugeBarRect(Canvas->SizeX, Canvas->SizeY);
+	const float GX = Bar.Min.X;
+	const float GY = Bar.Min.Y;
+	const float GW = Bar.GetSize().X;
+	const float GH = Bar.GetSize().Y;
 
 	DrawRect(Panel, GX - 5.f * Scale, GY - 5.f * Scale, GW + 10.f * Scale, GH + 10.f * Scale);
 	const float Fraction = Beach.GetTideFraction();
@@ -140,7 +149,7 @@ void ACrabHUD::DrawFoodBar(const ACrabPawn& Crab, float Scale)
 	DrawText(TEXT("FOOD"), Text, X, Y - 26.f * Scale, Font, Scale * 0.8f);
 }
 
-void ACrabHUD::DrawDigButton(const ACrabPawn& Crab, float Scale)
+FString ACrabHUD::DrawDigButton(const ACrabPawn& Crab, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
 	const FBox2D Rect = CrabHud::DigButtonRect(Canvas->SizeX, Canvas->SizeY);
@@ -181,15 +190,12 @@ void ACrabHUD::DrawDigButton(const ACrabPawn& Crab, float Scale)
 	if (!Reason.IsEmpty())
 	{
 		Reason[0] = FChar::ToUpper(Reason[0]);
-		float ReasonW = 0.f;
-		float ReasonH = 0.f;
-		GetTextSize(Reason, ReasonW, ReasonH, Font, Scale * 0.9f);
-		DrawRect(Panel, Rect.Max.X - ReasonW - 8.f * Scale, Rect.Min.Y - 40.f * Scale, ReasonW + 16.f * Scale, ReasonH + 8.f * Scale);
-		DrawText(Reason, Text, Rect.Max.X - ReasonW, Rect.Min.Y - 36.f * Scale, Font, Scale * 0.9f);
+		DrawReasonLine(Rect, Reason, Scale);
 	}
+	return Reason;
 }
 
-void ACrabHUD::DrawMoltButton(const ACrabPawn& Crab, float Scale)
+FString ACrabHUD::DrawMoltButton(const ACrabPawn& Crab, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
 	const FBox2D Rect = CrabHud::MoltButtonRect(Canvas->SizeX, Canvas->SizeY);
@@ -238,14 +244,64 @@ void ACrabHUD::DrawMoltButton(const ACrabPawn& Crab, float Scale)
 	}
 
 	// Why it is greyed out, above the button and lined up with its right edge.
-	FString Reason = bMolting ? FString(TEXT("Stay put: leaving cancels")) : FString(CrabMolt::ReasonText(Result));
+	const FString Reason = bMolting ? FString(TEXT("Stay put: leaving cancels")) : FString(CrabMolt::ReasonText(Result));
 	if (!Reason.IsEmpty())
 	{
-		float ReasonW = 0.f;
-		float ReasonH = 0.f;
-		GetTextSize(Reason, ReasonW, ReasonH, Font, Scale * 0.9f);
-		DrawRect(Panel, Rect.Max.X - ReasonW - 8.f * Scale, Rect.Min.Y - 40.f * Scale, ReasonW + 16.f * Scale, ReasonH + 8.f * Scale);
-		DrawText(Reason, Text, Rect.Max.X - ReasonW, Rect.Min.Y - 36.f * Scale, Font, Scale * 0.9f);
+		DrawReasonLine(Rect, Reason, Scale);
+	}
+	return Reason;
+}
+
+void ACrabHUD::DrawReasonLine(const FBox2D& Rect, const FString& Reason, float Scale)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	float ReasonW = 0.f;
+	float ReasonH = 0.f;
+	GetTextSize(Reason, ReasonW, ReasonH, Font, Scale * 0.9f);
+	DrawRect(Panel, Rect.Max.X - ReasonW - 8.f * Scale, Rect.Min.Y - 40.f * Scale, ReasonW + 16.f * Scale, ReasonH + 8.f * Scale);
+	DrawText(Reason, Text, Rect.Max.X - ReasonW, Rect.Min.Y - 36.f * Scale, Font, Scale * 0.9f);
+}
+
+FString ACrabHUD::DrawFoodButton(const ACrabPawn& Crab, float Scale)
+{
+	const FString Reason = CrabGoto::ReasonText(Crab.CheckGoToFood());
+	DrawGotoButton(CrabHud::FoodButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("FOOD"), TEXT("nearest patch"), FoodReady, Reason, Scale);
+	return Reason;
+}
+
+FString ACrabHUD::DrawBurrowButton(const ACrabPawn& Crab, float Scale)
+{
+	const FString Reason = CrabGoto::ReasonText(Crab.CheckGoToBurrow());
+	DrawGotoButton(CrabHud::BurrowButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("BURROW"), TEXT("safest burrow"), BurrowReady, Reason, Scale);
+	return Reason;
+}
+
+void ACrabHUD::DrawGotoButton(const FBox2D& Rect, const TCHAR* Label, const TCHAR* Hint, const FLinearColor& ReadyColour, const FString& Reason, float Scale)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	const FVector2D Size = Rect.GetSize();
+	const bool bReady = Reason.IsEmpty();
+	const FLinearColor Ink = bReady ? ButtonInk : TextDim;
+	const float Edge = 3.f * Scale;
+	DrawRect(Border, Rect.Min.X - Edge, Rect.Min.Y - Edge, Size.X + 2.f * Edge, Size.Y + 2.f * Edge);
+	DrawRect(bReady ? ReadyColour : DigOff, Rect.Min.X, Rect.Min.Y, Size.X, Size.Y);
+
+	auto Centred = [&](const FString& Line, float TextScale, float Down)
+	{
+		float W = 0.f;
+		float H = 0.f;
+		GetTextSize(Line, W, H, Font, TextScale);
+		// Shrink a line that would not fit, so a long word never runs off the button.
+		const float Fit = FMath::Min(1.f, (Size.X - 12.f * Scale) / FMath::Max(W, 1.f));
+		GetTextSize(Line, W, H, Font, TextScale * Fit);
+		DrawText(Line, Ink, Rect.Min.X + (Size.X - W) * 0.5f, Rect.Min.Y + Size.Y * Down, Font, TextScale * Fit);
+	};
+	Centred(Label, Scale * 2.f, 0.2f);
+	Centred(Hint, Scale * 0.8f, 0.68f);
+
+	if (!bReady)
+	{
+		DrawReasonLine(Rect, Reason, Scale);
 	}
 }
 
@@ -309,12 +365,20 @@ void ACrabHUD::DrawResults(const ACrabPawn& Crab, float Scale)
 	DrawText(TEXT("NEW ROUND"), ButtonInk, Button.Min.X + (ButtonSize.X - LabelW) * 0.5f, Button.Min.Y + (ButtonSize.Y - LabelH) * 0.5f, Font, Scale * 2.f);
 }
 
-void ACrabHUD::DrawMessage(const ACrabPawn& Crab, float Scale)
+void ACrabHUD::DrawMessage(const ACrabPawn& Crab, float Scale, const TArray<FString>& ShownReasons)
 {
 	const float Alpha = Crab.GetMessageAlpha();
 	if (Alpha <= 0.f || Crab.GetMessage().IsEmpty())
 	{
 		return;
+	}
+	// A refusal that a button's reason line already says is not said twice.
+	for (const FString& Reason : ShownReasons)
+	{
+		if (CrabHud::EchoesReason(Crab.GetMessage(), Reason))
+		{
+			return;
+		}
 	}
 	UFont* Font = GEngine->GetMediumFont();
 	float Width = 0.f;
@@ -326,9 +390,53 @@ void ACrabHUD::DrawMessage(const ACrabPawn& Crab, float Scale)
 	DrawText(Crab.GetMessage(), FLinearColor(1.f, 1.f, 1.f, Alpha), X, Y, Font, Scale * 1.3f);
 }
 
-void ACrabHUD::DrawHints(float Scale)
+void ACrabHUD::DrawHints(const ACrabPawn& Crab, float Scale)
 {
 	UFont* Font = GEngine->GetMediumFont();
-	DrawText(TEXT("Click: walk    Hold: follow    Right click: dash    Click the crab: dance    Click a burrow: dig in    Click green mud: eat    DIG: new burrow    MOLT: in a burrow"),
-		TextDim, 24.f * Scale, Canvas->SizeY - 30.f * Scale, Font, Scale * 0.7f);
+	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting());
+	TArray<FString> Lines;
+	Lines.Add(Hint.First);
+	if (!Hint.Second.IsEmpty())
+	{
+		Lines.Add(Hint.Second);
+	}
+
+	// Big and white on a dark panel, never under HintMinPixels tall whatever the font is, and shrunk (to that floor at
+	// most) only if a line would run into the grip bar.
+	float SampleW = 0.f;
+	float SampleH = 0.f;
+	GetTextSize(TEXT("Ag"), SampleW, SampleH, Font, 1.f);
+	const float Floor = CrabHud::HintMinPixels * Scale / FMath::Max(SampleH, 1.f);
+	float TextScale = FMath::Max(Scale * 1.5f, Floor);
+	const FBox2D Room = CrabHud::HintPanelRect(Canvas->SizeX, Canvas->SizeY);
+	const float Pad = 12.f * Scale;
+	float Widest = 0.f;
+	float LineH = 0.f;
+	for (const FString& Line : Lines)
+	{
+		float W = 0.f;
+		GetTextSize(Line, W, LineH, Font, TextScale);
+		Widest = FMath::Max(Widest, W);
+	}
+	if (Widest > Room.GetSize().X - 2.f * Pad)
+	{
+		TextScale = FMath::Max(TextScale * (Room.GetSize().X - 2.f * Pad) / Widest, Floor);
+		Widest = 0.f;
+		for (const FString& Line : Lines)
+		{
+			float W = 0.f;
+			GetTextSize(Line, W, LineH, Font, TextScale);
+			Widest = FMath::Max(Widest, W);
+		}
+	}
+
+	const float Gap = 4.f * Scale;
+	const float PanelH = Lines.Num() * LineH + (Lines.Num() - 1) * Gap + 2.f * Pad * 0.6f;
+	const float PanelW = Widest + 2.f * Pad;
+	const float Top = Room.Max.Y - PanelH;
+	DrawRect(HintPanel, Room.Min.X, Top, PanelW, PanelH);
+	for (int32 Index = 0; Index < Lines.Num(); ++Index)
+	{
+		DrawText(Lines[Index], HintInk, Room.Min.X + Pad, Top + Pad * 0.6f + Index * (LineH + Gap), Font, TextScale);
+	}
 }

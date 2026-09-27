@@ -228,6 +228,22 @@ float ACrabBeach::GetWaterDepthAt(float X, float Y) const
 	return FMath::Max(0.f, GetSurfaceLevel() - CrabTerrain::Height(X, Y));
 }
 
+float ACrabBeach::GetSecondsUntilWaterDeeperThan(float X, float Y, float Depth, float Horizon) const
+{
+	if (GetWaterDepthAt(X, Y) > Depth)
+	{
+		return 0.f;
+	}
+	// The tide clock runs at CrabSim.TideSpeed, so its seconds are that many times the player's.
+	const float Speed = CVarTideSpeed.GetValueOnGameThread();
+	if (bTideFrozen || Speed <= KINDA_SMALL_NUMBER)
+	{
+		return BIG_NUMBER;
+	}
+	const float Ahead = Tide.SecondsUntilSurfaceAbove(TideClock, CrabTerrain::Height(X, Y) + Depth, Horizon * Speed);
+	return Ahead >= BIG_NUMBER ? BIG_NUMBER : Ahead / Speed;
+}
+
 int32 ACrabBeach::FindBurrowNear(const FVector& Point, float MaxDistance) const
 {
 	int32 Best = INDEX_NONE;

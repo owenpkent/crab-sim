@@ -5,6 +5,7 @@
 #include "GameFramework/Character.h"
 #include "CrabDigMath.h"
 #include "CrabFoodMath.h"
+#include "CrabGotoMath.h"
 #include "CrabMoltMath.h"
 #include "CrabPawn.generated.h"
 
@@ -97,6 +98,18 @@ public:
 	bool IsFeeding() const { return FeedingPatch != INDEX_NONE; }
 	int32 GetFeedingPatch() const { return FeedingPatch; }
 
+	// --- Go-to buttons -----------------------------------------------------------
+
+	/** Ok if the FOOD button may be pressed, with the patch it would go to in OutPatch, otherwise why not. */
+	CrabGoto::EFoodResult CheckGoToFood(int32* OutPatch = nullptr) const;
+	/** Ok if the BURROW button may be pressed, with the burrow it would go to in OutBurrow, otherwise why not. */
+	CrabGoto::EBurrowResult CheckGoToBurrow(int32* OutBurrow = nullptr) const;
+
+	/** Walk to the nearest food patch worth the walk and feed there: the same as clicking it. False, with a message, if CheckGoToFood refuses. */
+	bool GoToFood();
+	/** Walk to the safest burrow the crab can reach and dig in: the same as clicking it. False, with a message, if CheckGoToBurrow refuses. */
+	bool GoToBurrow();
+
 	// --- Digging ----------------------------------------------------------------
 
 	/** Ok if the crab could start digging a burrow right here, otherwise why not. */
@@ -131,6 +144,14 @@ public:
 	/** Soft after a flood forced it out of a molt: its grip cannot rise above half for a while. */
 	bool IsSoft() const { return SoftRemaining > 0.f; }
 	float GetSoftRemaining() const { return SoftRemaining; }
+
+	// --- Peek ---------------------------------------------------------------------------
+
+	/** 0 out of sight, 1 showing over the edge of the hole: a crab in its burrow (not molting) keeps an eye out. */
+	float GetPeekBlend() const { return PeekBlend; }
+	bool IsPeeking() const { return PeekBlend > 0.01f; }
+	/** World Z of the highest of the peek's parts. */
+	float GetPeekTop() const;
 
 	// --- The round ------------------------------------------------------------------
 
@@ -214,6 +235,7 @@ private:
 	void UpdateForaging(float DeltaSeconds);
 	void UpdateMolting(float DeltaSeconds);
 	void UpdateGrowth(float DeltaSeconds);
+	void UpdatePeek(float DeltaSeconds);
 	void ApplyTestFood();
 	void UpdateAnimation(float DeltaSeconds);
 	void UpdateProceduralDance(float DeltaSeconds);
@@ -256,6 +278,22 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<UStaticMeshComponent>> EyeParts;
 
+	/** The stand-in that shows over the hole while the crab is in a burrow: the model itself is sunk out of sight. */
+	UPROPERTY(VisibleAnywhere, Category = "Crab")
+	TObjectPtr<USceneComponent> PeekRoot;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UStaticMeshComponent>> PeekShellParts;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UStaticMeshComponent>> PeekClawParts;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UStaticMeshComponent>> PeekEyeParts;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UStaticMeshComponent>> PeekPupilParts;
+
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> BasicMaterial;
 
@@ -296,6 +334,8 @@ private:
 	float MoltBlend = 0.f;
 	/** Seconds the crab stays showing after a molt, before it settles out of sight. */
 	float MoltAfterglow = 0.f;
+	float PeekBlend = 0.f;
+	float PeekClock = 0.f;
 	float SoftRemaining = 0.f;
 	float ShownGrowth = 1.f;
 	float DisplayScale = 1.f;

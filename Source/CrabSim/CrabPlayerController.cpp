@@ -3,6 +3,7 @@
 #include "CrabBeach.h"
 #include "CrabHudMath.h"
 #include "CrabPawn.h"
+#include "CrabPickMath.h"
 
 #include "CrabSim.h"
 #include "Engine/GameViewportClient.h"
@@ -57,30 +58,72 @@ bool ACrabPlayerController::GetCursorGroundPoint(FVector& OutPoint) const
 	return true;
 }
 
-void ACrabPlayerController::ResolveTarget(const ACrabPawn& Crab, const FVector& Point, FVector& OutTarget, int32& OutBurrow, int32& OutPatch) const
+bool ACrabPlayerController::ProjectToPixel(const FVector& World, FVector2D& OutPixel) const
+{
+	if (ProjectToView)
+	{
+		return ProjectToView(World, OutPixel);
+	}
+	return ProjectWorldLocationToScreen(World, OutPixel, false);
+}
+
+float ACrabPlayerController::ZoneScore(const FVector& Target, float WorldRadius, const FVector& Point, const FCrabPointer* Pointer) const
+{
+	float Score = FVector::Dist2D(Point, Target) / FMath::Max(WorldRadius, 1.f);
+	if (Pointer && !CrabHud::HitsAnyButton(Pointer->View.X, Pointer->View.Y, Pointer->Screen))
+	{
+		float OnScreen = 0.f;
+		const auto Project = [this](const FVector& World, FVector2D& Pixel) { return ProjectToPixel(World, Pixel); };
+		if (CrabPick::ZoneScore(Project, Target, WorldRadius, CrabHud::ScaleForHeight(Pointer->View.Y), Pointer->Screen, OnScreen))
+		{
+			Score = FMath::Min(Score, OnScreen);
+		}
+	}
+	return Score;
+}
+
+void ACrabPlayerController::ResolveTarget(const ACrabPawn& Crab, const FVector& Point, const FCrabPointer* Pointer, FVector& OutTarget, int32& OutBurrow, int32& OutPatch) const
 {
 	OutTarget = Point;
 	OutBurrow = INDEX_NONE;
 	OutPatch = INDEX_NONE;
 	if (const ACrabBeach* Beach = Crab.GetBeach())
 	{
-		const int32 Burrow = Beach->FindBurrowNear(Point, BurrowClickRadius);
-		if (Burrow != INDEX_NONE)
+		// The deepest zone the point is in wins. Burrows come first, so a burrow beats a patch under it.
+		float BestBurrow = 1.f;
+		for (int32 Index = 0; Index < Beach->GetBurrows().Num(); ++Index)
 		{
-			OutBurrow = Burrow;
-			OutTarget = Beach->GetBurrows()[Burrow].Location;
+			const float Score = ZoneScore(Beach->GetBurrows()[Index].Location, BurrowClickRadius, Point, Pointer);
+			if (Score <= BestBurrow)
+			{
+				BestBurrow = Score;
+				OutBurrow = Index;
+			}
+		}
+		if (OutBurrow != INDEX_NONE)
+		{
+			OutTarget = Beach->GetBurrows()[OutBurrow].Location;
 			return;
 		}
-		const int32 Patch = Beach->FindFoodPatchAt(Point);
-		if (Patch != INDEX_NONE)
+		float BestPatch = BIG_NUMBER;
+		for (int32 Index = 0; Index < Beach->GetFoodPatches().Num(); ++Index)
 		{
-			OutPatch = Patch;
-			OutTarget = Beach->GetFoodPatches()[Patch].Location;
+			const FCrabFoodPatch& Patch = Beach->GetFoodPatches()[Index];
+			const float Score = ZoneScore(Patch.Location, Patch.ClickRadius, Point, Pointer);
+			if (Score <= 1.f && Score < BestPatch)
+			{
+				BestPatch = Score;
+				OutPatch = Index;
+			}
+		}
+		if (OutPatch != INDEX_NONE)
+		{
+			OutTarget = Beach->GetFoodPatches()[OutPatch].Location;
 		}
 	}
 }
 
-void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
+void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point, const FCrabPointer* Pointer)
 {
 	// The results panel is up: the world is held still until the button starts a new round.
 	if (Crab.IsRoundOver())
@@ -93,7 +136,7 @@ void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 	{
 		// Clicking the hole you are in keeps you in it. Anywhere else, you come out and head there.
 		const int32 Hole = Crab.GetCurrentBurrow();
-		if (Beach && Beach->GetBurrows().IsValidIndex(Hole) && FVector::Dist2D(Point, Beach->GetBurrows()[Hole].Location) <= BurrowClickRadius)
+		if (Beach && Beach->GetBurrows().IsValidIndex(Hole) && ZoneScore(Beach->GetBurrows()[Hole].Location, BurrowClickRadius, Point, Pointer) <= 1.f)
 		{
 			return;
 		}
@@ -104,7 +147,7 @@ void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 		FVector Unused;
 		int32 Burrow = INDEX_NONE;
 		int32 Patch = INDEX_NONE;
-		ResolveTarget(Crab, Point, Unused, Burrow, Patch);
+		ResolveTarget(Crab, Point, Pointer, Unused, Burrow, Patch);
 		// The crab itself beats the patch it stands on: a click on the crab is a dance, not a feed.
 		if (Burrow == INDEX_NONE && FVector::Dist2D(Point, Crab.GetActorLocation()) <= DanceClickRadius)
 		{
@@ -118,7 +161,7 @@ void ACrabPlayerController::HandleClick(ACrabPawn& Crab, const FVector& Point)
 	FVector Target;
 	int32 Burrow = INDEX_NONE;
 	int32 Patch = INDEX_NONE;
-	ResolveTarget(Crab, Point, Target, Burrow, Patch);
+	ResolveTarget(Crab, Point, Pointer, Target, Burrow, Patch);
 	Crab.SetMoveTarget(Target, Burrow, Patch);
 }
 
@@ -145,14 +188,27 @@ void ACrabPlayerController::HandleLeftPress(ACrabPawn& Crab, const FVector2D& Sc
 		bSwallowHold = true;
 		return;
 	}
+	if (CrabHud::HitsFoodButton(ViewSize.X, ViewSize.Y, ScreenPos))
+	{
+		Crab.GoToFood();
+		bSwallowHold = true;
+		return;
+	}
+	if (CrabHud::HitsBurrowButton(ViewSize.X, ViewSize.Y, ScreenPos))
+	{
+		Crab.GoToBurrow();
+		bSwallowHold = true;
+		return;
+	}
 	if (GroundPoint)
 	{
 		bSwallowHold = false;
-		HandleClick(Crab, *GroundPoint);
+		const FCrabPointer Pointer{ScreenPos, ViewSize};
+		HandleClick(Crab, *GroundPoint, &Pointer);
 	}
 }
 
-void ACrabPlayerController::HandleHold(ACrabPawn& Crab, const FVector& Point)
+void ACrabPlayerController::HandleHold(ACrabPawn& Crab, const FVector& Point, const FCrabPointer* Pointer)
 {
 	if (Crab.IsInBurrow() || Crab.IsRoundOver() || bSwallowHold)
 	{
@@ -171,7 +227,7 @@ void ACrabPlayerController::HandleHold(ACrabPawn& Crab, const FVector& Point)
 	FVector Target;
 	int32 Burrow = INDEX_NONE;
 	int32 Patch = INDEX_NONE;
-	ResolveTarget(Crab, Point, Target, Burrow, Patch);
+	ResolveTarget(Crab, Point, Pointer, Target, Burrow, Patch);
 	Crab.SetMoveTarget(Target, Burrow, Patch);
 }
 
@@ -220,7 +276,10 @@ void ACrabPlayerController::LogScreenPositions(float DeltaTime)
 	const FVector2D DigCentre = CrabHud::DigButtonRect(ViewX, ViewY).GetCenter();
 	const FVector2D MoltCentre = CrabHud::MoltButtonRect(ViewX, ViewY).GetCenter();
 	const FVector2D NewRoundCentre = CrabHud::NewRoundButtonRect(ViewX, ViewY).GetCenter();
-	Line += FString::Printf(TEXT(" dig=%.0f,%.0f molt=%.0f,%.0f newround=%.0f,%.0f"), DigCentre.X, DigCentre.Y, MoltCentre.X, MoltCentre.Y, NewRoundCentre.X, NewRoundCentre.Y);
+	const FVector2D FoodCentre = CrabHud::FoodButtonRect(ViewX, ViewY).GetCenter();
+	const FVector2D BurrowCentre = CrabHud::BurrowButtonRect(ViewX, ViewY).GetCenter();
+	Line += FString::Printf(TEXT(" dig=%.0f,%.0f molt=%.0f,%.0f newround=%.0f,%.0f gofood=%.0f,%.0f goburrow=%.0f,%.0f"),
+		DigCentre.X, DigCentre.Y, MoltCentre.X, MoltCentre.Y, NewRoundCentre.X, NewRoundCentre.Y, FoodCentre.X, FoodCentre.Y, BurrowCentre.X, BurrowCentre.Y);
 	UE_LOG(LogCrabSim, Log, TEXT("%s"), *Line);
 }
 
@@ -252,6 +311,7 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 	const FVector2D Screen(MouseX, MouseY);
 	const FVector2D View(ViewX, ViewY);
 
+	const FCrabPointer Pointer{Screen, View};
 	if (WasInputKeyJustPressed(EKeys::LeftMouseButton) && bHaveMouse)
 	{
 		HandleLeftPress(*Crab, Screen, View, bHavePoint ? &Point : nullptr);
@@ -264,10 +324,9 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 			bSwallowHold = false;
 			HandleClick(*Crab, Point);
 		}
-		else if (IsInputKeyDown(EKeys::LeftMouseButton)
-			&& !(bHaveMouse && (CrabHud::HitsDigButton(View.X, View.Y, Screen) || CrabHud::HitsMoltButton(View.X, View.Y, Screen))))
+		else if (IsInputKeyDown(EKeys::LeftMouseButton) && !(bHaveMouse && CrabHud::HitsAnyButton(View.X, View.Y, Screen)))
 		{
-			HandleHold(*Crab, Point);
+			HandleHold(*Crab, Point, bHaveMouse ? &Pointer : nullptr);
 		}
 	}
 

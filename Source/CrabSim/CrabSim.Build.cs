@@ -7,6 +7,10 @@ public class CrabSim : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
+		// The test files each bring their own TestFlags into scope with a using-directive, so they only compile apart.
+		// Adaptive unity regroups files as the git working set changes, and merged them into one ambiguous blob.
+		bUseUnity = false;
+
 		PublicDependencyModuleNames.AddRange(new string[]
 		{
 			"Core",

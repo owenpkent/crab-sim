@@ -78,10 +78,19 @@ namespace
 	constexpr float MoltPulseSize = 0.04f;
 	// How fast the crab swells to its new size after a molt, per second.
 	constexpr float GrowthEase = 2.5f;
+	// A crab in its burrow shows its eyes, shell top and claw tips over the hole. It rises this far out of the sand (uu),
+	// bobs a little and takes about a second to come up.
+	constexpr float PeekRise = 110.f;
+	// The peek is drawn this much bigger than the crab, so it reads at a glance.
+	constexpr float PeekSize = 1.3f;
+	constexpr float PeekBobSize = 3.f;
+	constexpr float PeekBobHz = 0.7f;
+	constexpr float PeekEase = 7.f;
 
 	const FLinearColor ShellColor = FLinearColor(0.75f, 0.16f, 0.06f);
 	const FLinearColor ClawColor = FLinearColor(0.9f, 0.28f, 0.08f);
 	const FLinearColor EyeColor = FLinearColor(0.02f, 0.02f, 0.02f);
+	const FLinearColor EyeWhiteColor = FLinearColor(0.95f, 0.9f, 0.7f);
 	const FLinearColor MarkerColor = FLinearColor(1.f, 0.85f, 0.2f);
 
 	const TCHAR* SkeletalMeshPackage = TEXT("/Game/Crab/Meshes/SK_FiddlerCrab");
@@ -129,6 +138,12 @@ ACrabPawn::ACrabPawn()
 	Visual = CreateDefaultSubobject<USceneComponent>(TEXT("Visual"));
 	Visual->SetupAttachment(GetCapsuleComponent());
 	Visual->SetRelativeLocation(FVector(0.f, 0.f, VisualBaseZ));
+
+	// Faces the camera whatever way the crab was heading when it dug in (yaw 180 puts its front toward it).
+	PeekRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Peek"));
+	PeekRoot->SetupAttachment(GetCapsuleComponent());
+	PeekRoot->SetUsingAbsoluteRotation(true);
+	PeekRoot->SetRelativeRotation(FRotator(0.f, 180.f, 0.f));
 
 	BuildVisual();
 }
@@ -191,6 +206,21 @@ void ACrabPawn::BuildVisual()
 		ClawBaseLocations.Add(Claw->GetRelativeLocation());
 	}
 
+	// The peek: what shows over the hole while the crab is dug in. Same frame as above (+X the front), with Z = 0 at the
+	// sand. Bigger than life on purpose: the crab is a small thing on a big beach, and this has to read at a glance.
+	AddPart(TEXT("PeekShell"), Sphere, PeekRoot, FVector(0.f, 0.f, 2.f), FRotator::ZeroRotator, FVector(1.f, 1.2f, 0.7f), &PeekShellParts);
+	AddPart(TEXT("PeekClawSmall"), Sphere, PeekRoot, FVector(60.f, -66.f, 26.f), FRotator::ZeroRotator, FVector(0.44f, 0.3f, 0.3f), &PeekClawParts);
+	AddPart(TEXT("PeekClawBig"), Sphere, PeekRoot, FVector(56.f, 68.f, 28.f), FRotator::ZeroRotator, FVector(0.7f, 0.44f, 0.4f), &PeekClawParts);
+	AddPart(TEXT("PeekFinger"), Sphere, PeekRoot, FVector(98.f, 74.f, 34.f), FRotator::ZeroRotator, FVector(0.32f, 0.18f, 0.16f), &PeekClawParts);
+	for (int32 Side = -1; Side <= 1; Side += 2)
+	{
+		const FString Tag = Side < 0 ? TEXT("L") : TEXT("R");
+		const float Sign = static_cast<float>(Side);
+		AddPart(TEXT("PeekStalk") + Tag, Cylinder, PeekRoot, FVector(34.f, Sign * 24.f, 40.f), FRotator::ZeroRotator, FVector(0.05f, 0.05f, 0.5f), &PeekShellParts);
+		AddPart(TEXT("PeekEye") + Tag, Sphere, PeekRoot, FVector(36.f, Sign * 24.f, 68.f), FRotator::ZeroRotator, FVector(0.2f, 0.2f, 0.2f), &PeekEyeParts);
+		AddPart(TEXT("PeekPupil") + Tag, Sphere, PeekRoot, FVector(45.f, Sign * 24.f, 69.f), FRotator::ZeroRotator, FVector(0.1f, 0.1f, 0.1f), &PeekPupilParts);
+	}
+
 	TargetMarker = AddPart(TEXT("TargetMarker"), Cylinder, GetCapsuleComponent(), FVector::ZeroVector, FRotator::ZeroRotator, FVector(0.7f, 0.7f, 0.02f), nullptr);
 	TargetMarker->SetAbsolute(true, true, true);
 	TargetMarker->SetCastShadow(false);
@@ -211,6 +241,10 @@ void ACrabPawn::ApplyColors()
 	Paint(ShellParts, ShellColor);
 	Paint(ClawParts, ClawColor);
 	Paint(EyeParts, EyeColor);
+	Paint(PeekShellParts, ShellColor);
+	Paint(PeekClawParts, ClawColor);
+	Paint(PeekEyeParts, EyeWhiteColor);
+	Paint(PeekPupilParts, EyeColor);
 
 	UMaterialInstanceDynamic* Marker = UMaterialInstanceDynamic::Create(BasicMaterial, this);
 	Marker->SetVectorParameterValue(TEXT("Color"), MarkerColor);
@@ -279,6 +313,7 @@ void ACrabPawn::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyColors();
+	PeekRoot->SetVisibility(false, true);
 	TryUseSkeletalMesh();
 	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_READY"));
 }
@@ -521,6 +556,143 @@ void ACrabPawn::UpdateBurrowSink(float DeltaSeconds)
 	{
 		TargetMarker->SetHiddenInGame(true);
 	}
+}
+
+void ACrabPawn::UpdatePeek(float DeltaSeconds)
+{
+	// Once the model has sunk out of sight the peek comes up in its place. A molting crab, and one that has just molted,
+	// is shown half out by UpdateBurrowSink instead, so it waits.
+	const bool bShow = IsInBurrow() && !bMolting && MoltAfterglow <= 0.f && BurrowSink > 0.9f;
+	PeekBlend = IsInBurrow() ? FMath::FInterpTo(PeekBlend, bShow ? 1.f : 0.f, DeltaSeconds, PeekEase) : 0.f;
+	PeekClock += DeltaSeconds;
+
+	const bool bVisible = PeekBlend > 0.01f;
+	PeekRoot->SetVisibility(bVisible, true);
+	if (!bVisible)
+	{
+		return;
+	}
+	// The parts below the sand are hidden by it, so rising is just moving up. It grows with the crab, and is drawn bigger than it.
+	const float Bob = FMath::Sin(2.f * PI * PeekBobHz * PeekClock) * PeekBobSize * PeekBlend;
+	PeekRoot->SetRelativeLocation(FVector(0.f, 0.f, -CapsuleHalfHeight + 1.f - (1.f - PeekBlend) * PeekRise + Bob));
+	PeekRoot->SetRelativeScale3D(FVector(ShownGrowth * PeekSize));
+}
+
+float ACrabPawn::GetPeekTop() const
+{
+	float Top = -BIG_NUMBER;
+	for (const TObjectPtr<UStaticMeshComponent>& Part : PeekShellParts)
+	{
+		Top = FMath::Max(Top, static_cast<float>(Part->Bounds.Origin.Z + Part->Bounds.BoxExtent.Z));
+	}
+	for (const TObjectPtr<UStaticMeshComponent>& Part : PeekEyeParts)
+	{
+		Top = FMath::Max(Top, static_cast<float>(Part->Bounds.Origin.Z + Part->Bounds.BoxExtent.Z));
+	}
+	return Top;
+}
+
+// --- Go-to buttons -----------------------------------------------------------------------
+
+CrabGoto::EFoodResult ACrabPawn::CheckGoToFood(int32* OutPatch) const
+{
+	const ACrabBeach* Beach = GetBeach();
+	TArray<CrabGoto::FPatch> Patches;
+	if (Beach)
+	{
+		const FVector Location = GetActorLocation();
+		for (const FCrabFoodPatch& Patch : Beach->GetFoodPatches())
+		{
+			CrabGoto::FPatch Candidate;
+			Candidate.Distance = FVector::Dist2D(Location, Patch.Location);
+			Candidate.Richness = Patch.Richness;
+			Candidate.WaterDepth = Beach->GetWaterDepthAt(Patch.Location.X, Patch.Location.Y);
+			Candidate.SecondsUntilSoaked = Beach->GetSecondsUntilWaterDeeperThan(Patch.Location.X, Patch.Location.Y, CrabFood::SoakDepth);
+			Patches.Add(Candidate);
+		}
+	}
+	int32 Chosen = INDEX_NONE;
+	const CrabGoto::EFoodResult Result = CrabGoto::EvaluateFood(bRoundOver, Food, Patches, Chosen);
+	if (OutPatch)
+	{
+		*OutPatch = Chosen;
+	}
+	return Result;
+}
+
+CrabGoto::EBurrowResult ACrabPawn::CheckGoToBurrow(int32* OutBurrow) const
+{
+	const ACrabBeach* Beach = GetBeach();
+	TArray<CrabGoto::FBurrow> Burrows;
+	if (Beach)
+	{
+		const FVector Location = GetActorLocation();
+		for (int32 Index = 0; Index < Beach->GetBurrows().Num(); ++Index)
+		{
+			const FCrabBurrow& Burrow = Beach->GetBurrows()[Index];
+			CrabGoto::FBurrow Candidate;
+			Candidate.Distance = FVector::Dist2D(Location, Burrow.Location);
+			Candidate.FloorZ = Burrow.Location.Z;
+			Candidate.bFlooded = Beach->IsBurrowFlooded(Index);
+			Candidate.SecondsUntilFlooded = Beach->GetSecondsUntilWaterDeeperThan(Burrow.Location.X, Burrow.Location.Y, Burrow.FloodDepth);
+			Burrows.Add(Candidate);
+		}
+	}
+	int32 Chosen = INDEX_NONE;
+	const CrabGoto::EBurrowResult Result = CrabGoto::EvaluateBurrow(bRoundOver, IsInBurrow(), Burrows, Chosen);
+	if (OutBurrow)
+	{
+		*OutBurrow = Chosen;
+	}
+	return Result;
+}
+
+bool ACrabPawn::GoToFood()
+{
+	int32 Patch = INDEX_NONE;
+	const CrabGoto::EFoodResult Result = CheckGoToFood(&Patch);
+	const ACrabBeach* Beach = GetBeach();
+	if (Result != CrabGoto::EFoodResult::Ok || !Beach)
+	{
+		const FString Reason = CrabGoto::ReasonText(Result);
+		if (!Reason.IsEmpty())
+		{
+			SetMessage(Reason);
+			LogEvent(TEXT("goto_refused"), FString::Printf(TEXT("reason=%s"), *Reason));
+		}
+		return false;
+	}
+
+	// The same order as clicking the patch: out of the burrow if in one, then walk there and feed.
+	const FVector Where = Beach->GetFoodPatches()[Patch].Location;
+	LogEvent(TEXT("goto_food"), FString::Printf(TEXT("patch=%d distance=%.0f"), Patch, FVector::Dist2D(GetActorLocation(), Where)));
+	ExitBurrow();
+	StopDance();
+	SetMoveTarget(Where, INDEX_NONE, Patch);
+	return true;
+}
+
+bool ACrabPawn::GoToBurrow()
+{
+	int32 Burrow = INDEX_NONE;
+	const CrabGoto::EBurrowResult Result = CheckGoToBurrow(&Burrow);
+	const ACrabBeach* Beach = GetBeach();
+	if (Result != CrabGoto::EBurrowResult::Ok || !Beach)
+	{
+		const FString Reason = CrabGoto::ReasonText(Result);
+		if (!Reason.IsEmpty())
+		{
+			SetMessage(Reason);
+			LogEvent(TEXT("goto_refused"), FString::Printf(TEXT("reason=%s"), *Reason));
+		}
+		return false;
+	}
+
+	const FVector Where = Beach->GetBurrows()[Burrow].Location;
+	LogEvent(TEXT("goto_burrow"), FString::Printf(TEXT("burrow=%d distance=%.0f"), Burrow, FVector::Dist2D(GetActorLocation(), Where)));
+	StopDance();
+	SetMoveTarget(Where, Burrow, INDEX_NONE);
+	return true;
 }
 
 // --- Food -----------------------------------------------------------------------------
@@ -887,6 +1059,7 @@ void ACrabPawn::StartNewRound()
 	SoftRemaining = 0.f;
 	MoltAfterglow = 0.f;
 	MoltBlend = 0.f;
+	PeekBlend = 0.f;
 	ShownGrowth = 1.f;
 	DisplayScale = 1.f;
 	Food = CrabFood::StartFood;
@@ -1240,6 +1413,7 @@ void ACrabPawn::Tick(float DeltaSeconds)
 	UpdateMolting(DeltaSeconds);
 	UpdateGrowth(DeltaSeconds);
 	UpdateBurrowSink(DeltaSeconds);
+	UpdatePeek(DeltaSeconds);
 	UpdateWalking(DeltaSeconds);
 	UpdateForaging(DeltaSeconds);
 	UpdateAnimation(DeltaSeconds);

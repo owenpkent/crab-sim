@@ -87,6 +87,12 @@ public:
 	/** How deep the water is over the ground at this XY right now. Zero on dry ground. */
 	float GetWaterDepthAt(float X, float Y) const;
 
+	/**
+	 * Seconds until the water over the ground at this XY is deeper than Depth: 0 if it already is, BIG_NUMBER if
+	 * it will not be within Horizon seconds or the tide is frozen.
+	 */
+	float GetSecondsUntilWaterDeeperThan(float X, float Y, float Depth, float Horizon = 120.f) const;
+
 	// --- Burrows ------------------------------------------------------------
 
 	const TArray<FCrabBurrow>& GetBurrows() const { return Burrows; }
