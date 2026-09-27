@@ -16,8 +16,15 @@ The policy, in the order it is checked each tick (a quarter of a second):
      crab feed. Leave when it is bare (or nearly: 0.15 left, and another patch is reachable), or when 3 above says so.
   6. In a burrow with nothing to do: wait. Come out when a patch is reachable again, that is, when the water has fallen.
 
-Clicks are left clicks on a food patch, a burrow, the ground (a hop toward a target that is off screen, or toward
-open sand to dig) or the HUD's DIG, MOLT buttons. Every click goes to <output dir>/clicks.csv with its time. The
+A patch or burrow is clicked where it is on screen. One the camera cannot show (or that sits under a HUD button) is
+reached with the HUD's FOOD or BURROW button instead: one click walks the crab to the game's own choice (the nearest
+usable patch, the safest reachable burrow), and the bot adopts that choice as its goal. A hop toward the target is the
+fallback, for when the button is greyed (the crab is full, or already in a burrow) or refuses.
+
+Clicks are left clicks on a food patch, a burrow, the HUD's FOOD or BURROW button (to reach one off screen), the
+ground (a hop toward a target that is off screen, when the buttons cannot help, or toward open sand to dig) or the
+HUD's DIG, MOLT buttons. Every click goes to <output dir>/clicks.csv with its time and kind (patchN, burrowN, a _hop
+suffix for a hop, ground, dig, molt, gofood, goburrow); the SUMMARY line counts them by kind and per minute. The
 pointer glides between targets on eased curves like tour.py's. Nothing here checks the game: PASS/FAIL lines only
 say whether the round finished.
 
@@ -76,6 +83,10 @@ DIG_TIDE_QUIET = 40.0      # s of dry sand wanted at the spot: the tide is still
 NEAR_BURROW = 900.0        # uu: a burrow this close makes digging pointless
 DIG_WALKS = [(-40, 230), (-300, 170), (300, 170), (-40, -200), (-380, -60)]  # px from the crab, toward the dunes first
 RECLICK_WAIT = 1.6         # s before the same order is given again
+GOTO_WAIT = 2.0            # s the game gets to answer a FOOD or BURROW press (goto_food, goto_burrow or goto_refused)
+GOTO_RETRY = 10.0          # s of game time before a refused button is pressed again
+FULL = 0.98                # food at which the game greys the FOOD button
+BUTTON_RANGE = 3500.0      # uu: BURROW takes the highest floor within this, else the nearest dry burrow
 IDLE_RESET = 45.0          # s of nothing to do at low tide, after which the patches are assumed fresh
 STUCK_SECONDS = 6.0        # a walk that has not moved the crab 15 uu in this long is stuck
 CAP = float(os.environ.get("PLAYTEST_CAP") or 1200.0)
@@ -88,8 +99,12 @@ HOP_PX = (420, 290)        # farthest a hop toward an off-screen target goes fro
 HOP_CHAIN = 250.0          # uu: the next hop is clicked when the crab is this close to the end of the last one
 HOP_MIN = 130              # nearest, so a hop is never a click on the crab (that dances)
 SCREEN_PER_UU = (0.6, -0.35)   # rough px per uu, right and up, for a target the camera cannot project
-HUD_HALF = 70.0 + 10.0 + 20.0  # half a HUD button, its hit margin and some room, px at 720p
+BUTTON_HALF = {"dig": (70.0, 70.0), "molt": (70.0, 70.0), "gofood": (85.0, 50.0), "goburrow": (85.0, 50.0)}   # half a HUD button, px at 720p
+HUD_ROOM = 10.0 + 20.0     # a button's hit margin and some room, px at 720p
 ONE = {"burrows": "burrow", "patches": "patch"}
+GOTO_BUTTON = {"patches": "gofood", "burrows": "goburrow"}
+GOTO_EVENT = {"patches": "goto_food", "burrows": "goto_burrow"}
+LABEL = {"dig": "DIG", "molt": "MOLT", "gofood": "FOOD", "goburrow": "BURROW"}
 SHOT_NAMES = {"feeding": "1-first-feeding", "dig": "2-first-dig-done", "molt": "3-first-molt",
               "high": "4-high-tide-in-burrow", "results": "5-results"}
 
@@ -134,9 +149,12 @@ class PlayTest(Tour):
         self.rich = [full for _, _, full in PATCHES]   # richness left in each patch, as far as the crab knows
         self.goal = None            # (kind, index) the last click asked for
         self.goal_hop = False       # and whether that click was a hop toward it
+        self.goal_button = False    # or a press of the FOOD or BURROW button (the goal is then the game's choice)
+        self.refused = {}           # button name -> game time it was last refused
         self.pending = None         # (kind, index, pos, check time, hop) the last click, checked once
         self.last_click = 0.0
         self.click_times = []
+        self.click_kinds = []
         self.misses = []
         self.ev_i = 0
         self.molting = False
@@ -196,6 +214,7 @@ class PlayTest(Tour):
         self.rows.writerow(["%.3f" % time.time(), "%.2f" % self.video(), "%.2f" % (s.t if s else 0.0), kind, why, px, py])
         self.csv.flush()
         self.click_times.append(time.time())
+        self.click_kinds.append(kind)
         self.last_click = time.time()
 
     def point_at(self, pixel):
@@ -206,20 +225,29 @@ class PlayTest(Tour):
         time.sleep(0.12)
 
     def press(self, name):
-        """Click the HUD's dig or molt button."""
+        """Click a HUD button: "dig", "molt", "gofood" or "goburrow". None when the game does not log that button."""
         screen = self.fresh_screen()
         pixel = getattr(screen, name) if screen else None
         if pixel is None:
             return None
         self.point_at(pixel)
         mark = self.mark()
-        self.click(name, "the %s button" % name)
+        self.click(name, "the %s button" % LABEL[name])
         return mark
 
+    def hud_boxes(self, screen):
+        """[(left, top, right, bottom)] of each HUD button the game logged, grown by its hit margin and some room, px."""
+        k = screen.view[1] / 720.0
+        boxes = []
+        for name, (hx, hy) in BUTTON_HALF.items():
+            b = getattr(screen, name)
+            if b is not None:
+                hx, hy = (hx + HUD_ROOM) * k, (hy + HUD_ROOM) * k
+                boxes.append((b[0] - hx, b[1] - hy, b[0] + hx, b[1] + hy))
+        return boxes
+
     def on_hud(self, pixel, screen):
-        half = HUD_HALF * screen.view[1] / 720.0
-        return any(b is not None and abs(pixel[0] - b[0]) < half and abs(pixel[1] - b[1]) < half
-                   for b in (screen.dig, screen.molt))
+        return any(l < pixel[0] < r and t < pixel[1] < b for l, t, r, b in self.hud_boxes(screen))
 
     def aim(self, screen, kind, pos):
         """(pixel, hop): where to click for a burrow or patch. Its own pixel when it is in view and clear of the HUD
@@ -238,9 +266,23 @@ class PlayTest(Tour):
         length = math.hypot(vx, vy)
         if length < HOP_MIN:
             vx, vy = vx * HOP_MIN / max(length, 1.0), vy * HOP_MIN / max(length, 1.0)
-        # The camera trails the crab, so its pixel is not always the middle: keep the hop off the HUD buttons.
-        right = min((b[0] for b in (screen.dig, screen.molt) if b), default=screen.view[0]) - HUD_HALF * screen.view[1] / 720.0
-        return (min(max(cx + vx, 80.0), right), min(max(cy + vy, 60.0), screen.view[1] - 60.0)), True
+        x, y = min(max(cx + vx, 80.0), screen.view[0]), min(max(cy + vy, 60.0), screen.view[1] - 60.0)
+        # The camera trails the crab, so its pixel is not always the middle: keep the hop off the HUD buttons. In a
+        # button's row it stops short of the button on its left (the go-to buttons sit left of DIG and MOLT).
+        for _ in (0, 1):
+            for left, top, right, bottom in self.hud_boxes(screen):
+                if top < y < bottom and x > left:
+                    x = left - 1.0
+            if math.hypot(x - cx, y - cy) >= HOP_MIN:
+                break
+            # That left it on the crab (a click there dances): go up or down from it instead.
+            y = min(max(cy + math.copysign(HOP_MIN, vy if vy else -1.0), 60.0), screen.view[1] - 60.0)
+        return (x, y), True
+
+    def needs_hop(self, kind, pos):
+        """True when the latest screen line shows the target off screen or under a HUD button (no click can reach it)."""
+        screens = self.tail.screens
+        return not screens or self.aim(screens[-1], kind, pos)[1]
 
     def spot(self, kind, index):
         """(x, y, index) of a burrow or a patch in the world."""
@@ -250,8 +292,45 @@ class PlayTest(Tour):
             x, y, _ = PATCHES[index]
         return (x, y, index)
 
+    def press_goto(self, kind, s, why):
+        """Reach a patch or burrow that cannot be clicked with the FOOD or BURROW button. True when the game took the
+        press and its own choice is now the goal. False when the button is greyed, refused or missing: hop instead."""
+        name = GOTO_BUTTON[kind]
+        last = self.refused.get(name)
+        inside = s.burrow is not None and s.burrow >= 0
+        feeding = s.feeding is not None and s.feeding >= 0
+        full = s.food is not None and s.food >= FULL
+        # The game greys BURROW in a burrow and FOOD when full. Standing on a patch, FOOD would only pick that one.
+        if (last is not None and s.t - last < GOTO_RETRY) or (inside if kind == "burrows" else full or feeding):
+            return False
+        mark = self.press(name)
+        if mark is None:
+            return False               # an older game that does not log the button
+        limit = mark.t + GOTO_WAIT
+        found = self.wait_for(lambda: self.find_event(mark.events, GOTO_EVENT[kind], limit)
+                              or self.find_event(mark.events, "goto_refused", limit), limit)
+        chosen = event_detail(found, ONE[kind]) if found is not None and found.name == GOTO_EVENT[kind] else None
+        chosen = None if chosen is None else int(chosen)
+        if chosen is None or not (chosen in self.burrow_at if kind == "burrows" else 0 <= chosen < len(PATCHES)):
+            self.refused[name] = self.now_t()
+            if found is None:
+                reason = "no answer from the game"
+            elif found.name == "goto_refused":
+                reason = "refused: %s" % found.rest
+            else:
+                reason = "it named an unknown %s: %s" % (ONE[kind], found.rest)
+            self.say("press %s: %s: hop toward it instead" % (LABEL[name], reason))
+            return False
+        self.goal = (kind, chosen)     # the game's choice replaces the bot's
+        self.goal_hop = False
+        self.goal_button = True
+        self.pending = None            # a press has no MISS check
+        self.say("press %s: the game chose %s%d: %s" % (LABEL[name], ONE[kind], chosen, why))
+        return True
+
     def go(self, kind, index, why):
-        """Click a burrow or a patch (or the ground toward it) unless that order already stands."""
+        """Click a burrow or a patch (or press FOOD or BURROW, or click the ground toward it, when it cannot be clicked)
+        unless that order already stands."""
         pos = self.spot(kind, index)
         s = self.tail.latest()
         if self.heading_to(s, pos):
@@ -263,10 +342,17 @@ class PlayTest(Tour):
                     return
             elif time.time() - self.last_click < RECLICK_WAIT:
                 return
+        elif self.goal_button and self.goal and self.goal[0] == kind and self.needs_hop(kind, pos):
+            # The game chose a target of its own for a button press and the crab is on its way there: leave it be.
+            if self.heading_to(s, self.spot(*self.goal)) or time.time() - self.last_click < RECLICK_WAIT:
+                return
         screen = self.fresh_screen()
         if screen is None:
             return
         pixel, hop = self.aim(screen, kind, pos)
+        if hop and self.press_goto(kind, s, why):
+            return
+        self.goal_button = False
         self.say("click %s%d%s: %s" % (ONE[kind], index, " (hop toward it)" if hop else "", why))
         self.point_at(pixel)
         if not hop:
@@ -392,9 +478,29 @@ class PlayTest(Tour):
             options.append((gain - DRAIN * walk + (0.05 if self.goal == ("patches", i) else 0.0), i))
         return sorted(options, reverse=True)
 
+    def button_burrow(self, s):
+        """The burrow a press of BURROW takes, by the game's rule: of the dry ones the crab gets to before the sea (3 s to
+        spare) and within 3500 uu, the highest floor (the nearer among floors within 10 uu), else the nearest dry one."""
+        dry = [(math.hypot(x - s.x, y - s.y), z, i) for i, (x, y, z) in self.burrow_at.items()
+               if dry_for(z, s.t) >= math.hypot(x - s.x, y - s.y) / WALK_SPEED + 3.0]
+        near = [d for d in dry if d[0] <= BUTTON_RANGE]
+        if near:
+            top = max(z for _, z, _ in near)
+            near = [d for d in near if d[1] >= top - 10.0]
+        pool = near or dry
+        return min(pool)[2] if pool else None
+
     def molt_choice(self, s):
-        """The burrow to go and molt in, when the food covers the walk and it stays dry through the molt."""
+        """The burrow to go and molt in, when the food covers the walk and it stays dry through the molt. One out of view
+        is reached with BURROW, which takes the game's own choice, so that is the walk the food has to cover."""
         for walk, i in self.safe_burrows(s, MOLT_SECONDS + MOLT_MARGIN)[:1]:
+            if self.needs_hop("burrows", self.spot("burrows", i)):
+                j = self.button_burrow(s)
+                if j is not None:
+                    x, y, z = self.burrow_at[j]
+                    there = math.hypot(x - s.x, y - s.y) / WALK_SPEED
+                    if dry_for(z, s.t + there) >= MOLT_SECONDS + MOLT_MARGIN:
+                        walk, i = there, j
             if s.food >= MOLT_FOOD + DRAIN * (walk + 2.0):
                 return i
         return None
@@ -502,12 +608,14 @@ class PlayTest(Tour):
         self.wait_out(s)
 
     def leave_thin_patch(self, s):
-        """Sifting a patch that is nearly bare: go to a better one, if there is one."""
+        """Sifting a patch that is nearly bare: click a better one that is in view. One that needs the FOOD button or a hop
+        is not worth leaving for: FOOD picks the nearest patch, this one, so the crab sifts on until it is bare."""
         if self.sift is None or self.sift[0] != s.feeding:
             return
         _, rich, food, t = self.sift
         left = rich - ((s.food - food) + DRAIN * (s.t - t))
-        others = [o for o in self.patch_options(s) if o[1] != s.feeding]
+        others = [o for o in self.patch_options(s)
+                  if o[1] != s.feeding and not self.needs_hop("patches", self.spot("patches", o[1]))]
         if left < LEAVE_RICH and others:
             self.go("patches", others[0][1], "patch%d is nearly bare (%.2f left): on to a better one" % (s.feeding, left))
 
@@ -541,7 +649,7 @@ class PlayTest(Tour):
         """In a burrow and not molting."""
         z = self.burrow_at[s.burrow][2] if s.burrow in self.burrow_at else ground(s.x, s.y)
         dry = dry_for(z, s.t)
-        if s.food >= MOLT_FOOD + 0.01 and dry >= MOLT_SECONDS + MOLT_MARGIN and time.time() >= self.no_molt_until:
+        if s.food >= MOLT_FOOD + 0.004 and dry >= MOLT_SECONDS + MOLT_MARGIN and time.time() >= self.no_molt_until:
             self.say("food %.2f: molt (this hole stays dry %.0f s)" % (s.food, min(dry, 999)))
             return self.press_molt(s)
         refuge = self.refuge(s)
@@ -600,9 +708,13 @@ class PlayTest(Tour):
 
     def summary(self, won):
         gaps = [b - a for a, b in zip([self.began] + self.click_times, self.click_times)]
-        self.say("SUMMARY won=%s clicks=%d longest_gap=%.0f s misses=%d dug=%d real=%.0f s"
-                 % (won, len(self.click_times), max(gaps, default=0.0), len(self.misses), self.dug,
-                    time.time() - self.began))
+        kinds, real = self.click_kinds, time.time() - self.began
+        hops = sum(1 for k in kinds if k.endswith("_hop"))
+        goto = sum(1 for k in kinds if k in ("gofood", "goburrow"))
+        self.say("SUMMARY won=%s clicks=%d hops=%d ground=%d goto_buttons=%d dig_presses=%d molt_presses=%d per_min=%.1f "
+                 "longest_gap=%.0f s misses=%d dug=%d real=%.0f s"
+                 % (won, len(kinds), hops, kinds.count("ground"), goto, kinds.count("dig"), kinds.count("molt"), len(kinds) * 60.0 / max(real, 1.0),
+                    max(gaps, default=0.0), len(self.misses), self.dug, real))
 
     def scenario_tour(self):
         self.begin(want_mouse=True, settle=SETTLE)

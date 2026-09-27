@@ -8,8 +8,9 @@ Unreal Engine 5.8, C++. Design brief in `GAME.md`.
 
 Playable: an animated fiddler crab on a sloped 3D beach with a tide that rises and falls, translucent water with
 foam, burrows that flood, grip that the surge drains, a dance, food patches to sift, burrows the crab digs
-itself with a big on-screen button, and molting: three molts in a burrow, each ten seconds and 80% of the food, win
-the round. Gulls and pinching are not built. The crab, sand and water are real assets
+itself with a big on-screen button, big FOOD and BURROW buttons that walk the crab to the nearest food patch and the
+safest burrow with one click, a crab that peeks out of its hole, and molting: three molts in a burrow, each ten
+seconds and 80% of the food, win the round. Gulls and pinching are not built. The crab, sand and water are real assets
 (`Art/README.md`). Rocks, shells and plants still wait on CC0 environment
 assets that need network access to fetch.
 
@@ -19,6 +20,10 @@ assets that need network access to fetch.
 - Hold left: follow the cursor.
 - Left click a burrow: walk there and dig in. Click elsewhere to come out.
 - Left click a food patch (green mud): walk there and feed until it is bare or you are full.
+  Burrows and patches are click targets at least 90 by 60 px on screen (an ellipse) at any camera range.
+- Left click the FOOD button (left of MOLT and DIG): walk to the nearest food patch that is dry, has food and stays
+  dry long enough, and feed. BURROW, below it: walk to the safest burrow you can reach and dig in. No aim needed, and
+  they work when the target is off screen.
 - Left click the DIG button (bottom right): dig a new burrow where the crab stands. Four seconds of standing still,
   costs 30% food, needs dry sand away from other burrows and patches. Any walk cancels it.
 - Left click the MOLT button (above the dig button): molt, in a burrow with at least 80% food. Ten seconds, costs 80%
@@ -33,14 +38,17 @@ assets that need network access to fetch.
 - `Source/CrabSim/`: game module
   - `CrabMovementMath.h`, `CrabTerrainMath.h`, `CrabTide.h`, `CrabSurvivalMath.h`, `CrabFoodMath.h`,
     `CrabDigMath.h`, `CrabMoltMath.h` (molting, the round, and every pacing number in `CrabMolt::Tuning`),
-    `CrabHudMath.h`: the rules and the HUD layout, pure functions
-  - `CrabPawn`: the crab, its camera, dance, burrow, grip, food, digging, molting and the round, and its shape-built
-    stand-in visual
+    `CrabGotoMath.h` (what FOOD and BURROW pick), `CrabPickMath.h` (the on-screen click zones), `CrabHudMath.h`: the
+    rules and the HUD layout, pure functions
+  - `CrabPawn`: the crab, its camera, dance, burrow, grip, food, digging, molting and the round, its go-to
+    buttons' logic, and its shape-built stand-in visual (and the stand-in that peeks over a hole)
   - `CrabPlayerController`: pointer input
   - `CrabBeach`: the terrain and water meshes, the tide clock, burrows (authored and dug), food patches, rocks and props
-  - `CrabHUD`: tide gauge, grip and food bars, the dig and molt buttons, molt pips, soft tag, messages, results panel
+  - `CrabHUD`: tide gauge, grip and food bars, the FOOD, BURROW, dig and molt buttons, molt pips, soft tag, messages,
+    the help panel, results panel
   - `CrabSimGameMode`: wires the above together
-  - `Tests/`: automation tests (rules, beach, pawn, controller, game mode)
+  - `Tests/`: automation tests (rules, beach, pawn, controller, game mode). The module builds without unity files,
+    because the test files each bring their own `TestFlags` into scope.
 - `Config/`: project ini files
 - `Scripts/`: build, test, play, live test, record, screenshot
 - `Art/`: Blender and Unreal Python that build the assets, plus the art contract
@@ -56,11 +64,11 @@ Scripts/live-test.sh      drive the real game with a virtual mouse and check the
 Scripts/shot.sh out.png   screenshot the running game window
 Scripts/record.sh [out.mp4]   record a scripted tour of the game as video (default videos/crab-sim-tour.mp4)
 RECORD_TOUR=molt Scripts/record.sh   record the molt tour instead (default videos/crab-sim-molt.mp4)
-RECORD_TOUR=playtest SPEEDUP=4 CRF=30 Scripts/record.sh   a bot plays one whole round (about 10 min, videos/crab-sim-playtest.mp4)
+RECORD_TOUR=playtest SPEEDUP=4 CRF=30 Scripts/record.sh   a bot plays one whole round (10 to 15 min, videos/crab-sim-playtest.mp4)
 ```
 
 `live-test.sh` opens a window and moves the real pointer for a few minutes: one game launch per scenario (`basic`,
-`tide`, `forage`, `molt`). Leave the machine alone while it runs. Needs X11 and write access to `/dev/uinput`. It refuses
+`tide`, `forage`, `molt`, `goto`). Leave the machine alone while it runs. Needs X11 and write access to `/dev/uinput`. It refuses
 to start while any other CrabSim UnrealEditor is running.
 
 The `forage` scenario (about a minute, tide frozen at low water) clicks a food patch and checks that the crab
@@ -82,6 +90,15 @@ digs in again and molts to the end: `molt_done` after 10 s, the crab stayed put,
 LIVE_SCENARIOS=molt Scripts/live-test.sh
 ```
 
+The `goto` scenario (about a minute, tide frozen at low water) clicks the HUD's FOOD button and checks that the crab
+walks to the nearest patch (patch2, off screen at the start) and feeds there with its food rising, clicks BURROW while
+it feeds and checks that it stops, walks to the highest burrow and digs in, then clicks BURROW again while dug in and
+checks that the press is refused, orders no walk and leaves the crab where it is. Run it alone with:
+
+```
+LIVE_SCENARIOS=goto Scripts/live-test.sh
+```
+
 `record.sh` launches the game, plays a 90 second tour through the same virtual pointer (feed on a patch, dig a
 burrow, dig into it, scuttle, dance, dash, then the tide rises and sweeps the crab out) and captures the window with
 ffmpeg: about 2 minutes end to end, same rules as the live test (it refuses to start if another CrabSim game is running). Writes the mp4 and an events
@@ -96,8 +113,10 @@ results panel and NEW ROUND. It runs with `CrabSim.FoodFloor 0.9` and a slow tid
 
 `RECORD_TOUR=playtest` plays `Scripts/live/playtest.py` instead: a small reactive bot that reads the state log and plays one full
 round at the default tide with left clicks only (feed the richest reachable patch, retreat to a high burrow when the sea
-rises, molt when fed, dig once when the tide is low), until the results panel. The run folder gets `clicks.csv` (every click,
-timed), `playtest.log` and five screenshots (`PLAYTEST_SHOTS=<dir>` to move them). Unlike the tours it takes as long as the
+rises, molt when fed, dig once when the tide is low), until the results panel. A patch or burrow that is off screen is
+reached with the FOOD or BURROW button, one click, instead of a chain of ground hops; a hop is the fallback when a
+button is greyed, and the way to open sand for the dig. The run folder gets `clicks.csv` (every click, with its kind
+and time), `playtest.log` (its last line counts the clicks, hops, button presses and clicks a minute) and five screenshots (`PLAYTEST_SHOTS=<dir>` to move them). Unlike the tours it takes as long as the
 round does (`LIMIT` defaults to 1320 s for it).
 
 Console variables and commands:
@@ -105,7 +124,8 @@ Console variables and commands:
 - `CrabSim.StateLog 1`: log the crab's state every 0.2 s, including `food=`, `feeding=` (the patch it is on, or -1),
   `dig=` (progress 0 to 1), `dug=` (dug burrows), `molts=`, `molt=` (progress 0 to 1), `soft=` (seconds left),
   `over=` (the round is won) and `scale=` (how big the crab looks), plus where the crab, burrows, food patches, the
-  dig and molt buttons and the new round button are on screen (the live test reads it). Events such as `food_begin`,
+  dig and molt buttons, the new round button and the FOOD and BURROW buttons (`gofood=`, `goburrow=`) are on screen
+  (the live test reads it). Events such as `goto_food`, `goto_burrow`, `goto_refused`, `food_begin`,
   `food_end` (with `amount=`), `dig_begin`, `dig_done`, `dig_cancel`, `molt_begin`, `molt_done`, `molt_cancel`,
   `molt_refused`, `soft_begin`, `soft_end`, `round_won`, `round_new`, `surge_begin` and `swept_out` are logged as
   `CRABSIM_EVENT`
