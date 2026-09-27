@@ -126,3 +126,27 @@ bool FCrabTideSwellTest::RunTest(const FString& Parameters)
 	TestNearlyEqual(TEXT("no swell means surface equals tide"), NoSwell.SurfaceLevelAt(31.f), NoSwell.TideLevelAt(31.f), 1e-4f);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabTideLookAheadTest, "CrabSim.Tide.FindsWhenTheSeaWillNextStandAboveALevel", UE::CrabSim::Tests::Tide::TestFlags)
+bool FCrabTideLookAheadTest::RunTest(const FString& Parameters)
+{
+	const FCrabTideSettings S = UE::CrabSim::Tests::Tide::Simple();
+	TestNearlyEqual(TEXT("already above: now"), S.SecondsUntilSurfaceAbove(50.f, 40.f, 60.f), 0.f, 1e-4f);
+
+	// The level is 50 at t=25 on the way up. From t=0 the sea reaches just over 50 a moment after that.
+	const float Rising = S.SecondsUntilSurfaceAbove(0.f, 50.f, 60.f, 0.5f);
+	TestTrue(*FString::Printf(TEXT("rising to 50 takes about 25 s (%.1f)"), Rising), Rising >= 25.f && Rising <= 25.5f);
+	TestNearlyEqual(TEXT("from ten seconds later it is ten seconds less"), S.SecondsUntilSurfaceAbove(10.f, 50.f, 60.f, 0.5f), Rising - 10.f, 0.51f);
+
+	TestEqual(TEXT("a level it never reaches within the horizon"), S.SecondsUntilSurfaceAbove(0.f, 50.f, 20.f), static_cast<float>(BIG_NUMBER));
+	TestEqual(TEXT("or above the high water mark at all"), S.SecondsUntilSurfaceAbove(0.f, 150.f, 500.f), static_cast<float>(BIG_NUMBER));
+	TestEqual(TEXT("or on the ebb, when the level is only falling away from it"), S.SecondsUntilSurfaceAbove(60.f, 95.f, 20.f), static_cast<float>(BIG_NUMBER));
+
+	// A swell makes the surface cross a level early: the first crossing counts.
+	FCrabTideSettings Swelling = S;
+	Swelling.SwellHeight = 10.f;
+	Swelling.SwellPeriod = 7.f;
+	TestTrue(TEXT("with a swell the sea reaches a level no later than without it"),
+		Swelling.SecondsUntilSurfaceAbove(0.f, 50.f, 60.f, 0.25f) <= S.SecondsUntilSurfaceAbove(0.f, 50.f, 60.f, 0.25f) + 0.26f);
+	return true;
+}

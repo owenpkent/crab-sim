@@ -207,3 +207,181 @@ bool FCrabHudNewRoundHitTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("the dig button does not"), CrabHud::HitsNewRoundButton(1280, 720, CrabHud::DigButtonRect(1280, 720).GetCenter()));
 	return true;
 }
+
+// --- The go-to buttons, the help text and the message line ----------------------------------------------------
+
+namespace
+{
+	/** Windows a person plays in: 720p and up. The smallest one is only checked for staying inside the view. */
+	const FIntPoint PlayableViews[] = {FIntPoint(1280, 720), FIntPoint(1920, 1080), FIntPoint(2560, 1440), FIntPoint(3840, 2160)};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudGotoSizeTest, "CrabSim.Hud.TheGotoButtonsAreBigAtEverySize", TestFlags)
+bool FCrabHudGotoSizeTest::RunTest(const FString& Parameters)
+{
+	for (const FIntPoint& View : MoltViews)
+	{
+		const FVector2D Food = CrabHud::FoodButtonRect(View.X, View.Y).GetSize();
+		const FVector2D Burrow = CrabHud::BurrowButtonRect(View.X, View.Y).GetSize();
+		TestTrue(*FString::Printf(TEXT("at %dx%d FOOD is at least 120 px wide (%.0f)"), View.X, View.Y, Food.X), Food.X >= 120.f);
+		TestTrue(*FString::Printf(TEXT("and 80 px tall (%.0f)"), Food.Y), Food.Y >= 80.f);
+		TestTrue(TEXT("BURROW too"), Burrow.X >= 120.f && Burrow.Y >= 80.f);
+		TestNearlyEqual(TEXT("both the same size"), static_cast<float>(Food.X), static_cast<float>(Burrow.X), 0.01f);
+		TestNearlyEqual(TEXT("and height"), static_cast<float>(Food.Y), static_cast<float>(Burrow.Y), 0.01f);
+	}
+	TestNearlyEqual(TEXT("170 px wide at 720p"), static_cast<float>(CrabHud::FoodButtonRect(1280, 720).GetSize().X), 170.f, 0.01f);
+	TestNearlyEqual(TEXT("and 100 tall"), static_cast<float>(CrabHud::FoodButtonRect(1280, 720).GetSize().Y), 100.f, 0.01f);
+	TestTrue(TEXT("they grow with the window"), CrabHud::FoodButtonRect(3840, 2160).GetSize().X > 170.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudGotoPlaceTest, "CrabSim.Hud.TheGotoButtonsStackLeftOfMoltAndDigAndOverlapNothing", TestFlags)
+bool FCrabHudGotoPlaceTest::RunTest(const FString& Parameters)
+{
+	for (const FIntPoint& View : MoltViews)
+	{
+		const FBox2D Food = CrabHud::FoodButtonRect(View.X, View.Y);
+		const FBox2D Burrow = CrabHud::BurrowButtonRect(View.X, View.Y);
+		TestTrue(*FString::Printf(TEXT("at %dx%d FOOD is inside the view"), View.X, View.Y), Food.Min.X >= 0.f && Food.Min.Y >= 0.f && Food.Max.X <= View.X && Food.Max.Y <= View.Y);
+		TestTrue(TEXT("and BURROW"), Burrow.Min.X >= 0.f && Burrow.Min.Y >= 0.f && Burrow.Max.X <= View.X && Burrow.Max.Y <= View.Y);
+	}
+
+	for (const FIntPoint& View : PlayableViews)
+	{
+		const float Scale = CrabHud::ScaleForHeight(View.Y);
+		const float Margin = CrabHud::DigButtonHitMargin * Scale;
+		const FBox2D Food = CrabHud::FoodButtonRect(View.X, View.Y);
+		const FBox2D Burrow = CrabHud::BurrowButtonRect(View.X, View.Y);
+		const FBox2D Molt = CrabHud::MoltButtonRect(View.X, View.Y);
+		const FBox2D Dig = CrabHud::DigButtonRect(View.X, View.Y);
+
+		TestTrue(*FString::Printf(TEXT("at %dx%d FOOD is above BURROW"), View.X, View.Y), Food.Max.Y < Burrow.Min.Y);
+		TestNearlyEqual(TEXT("lined up with it"), static_cast<float>(Food.Min.X), static_cast<float>(Burrow.Min.X), 0.01f);
+		TestTrue(TEXT("both left of the MOLT and DIG column"), Burrow.Max.X < Molt.Min.X && Burrow.Max.X < Dig.Min.X);
+		TestTrue(TEXT("with room between for the reason lines of DIG and MOLT"), Molt.Min.X - Burrow.Max.X >= 100.f * Scale);
+		TestTrue(TEXT("room between FOOD and BURROW for the reason line above BURROW"), Burrow.Min.Y - Food.Max.Y >= 40.f * Scale);
+		TestTrue(TEXT("and above FOOD for its own"), Food.Min.Y > 40.f * Scale);
+
+		const FBox2D Others[] = {
+			Molt, Dig,
+			CrabHud::FoodBarRect(View.X, View.Y), CrabHud::GripBarRect(View.X, View.Y),
+			CrabHud::MoltPipRect(View.X, View.Y, 0), CrabHud::MoltPipRect(View.X, View.Y, 1), CrabHud::MoltPipRect(View.X, View.Y, 2),
+			CrabHud::TideGaugeRect(View.X, View.Y), CrabHud::HintPanelRect(View.X, View.Y)};
+		for (const FBox2D& Other : Others)
+		{
+			TestFalse(TEXT("FOOD, with its hit margin, overlaps none of MOLT, DIG, the bars, the pips, the gauge or the help"), Overlaps(Food.ExpandBy(Margin), Other.ExpandBy(12.f)));
+			TestFalse(TEXT("nor does BURROW"), Overlaps(Burrow.ExpandBy(Margin), Other.ExpandBy(12.f)));
+		}
+		TestFalse(TEXT("and their hit areas do not touch each other"), Overlaps(Food.ExpandBy(Margin), Burrow.ExpandBy(Margin)));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudGotoHitTest, "CrabSim.Hud.ClicksOnTheGotoButtonsAreForgiving", TestFlags)
+bool FCrabHudGotoHitTest::RunTest(const FString& Parameters)
+{
+	const FBox2D Food = CrabHud::FoodButtonRect(1280, 720);
+	const FBox2D Burrow = CrabHud::BurrowButtonRect(1280, 720);
+	TestTrue(TEXT("the middle of FOOD hits it"), CrabHud::HitsFoodButton(1280, 720, Food.GetCenter()));
+	TestTrue(TEXT("each corner hits"), CrabHud::HitsFoodButton(1280, 720, Food.Min) && CrabHud::HitsFoodButton(1280, 720, Food.Max));
+	TestTrue(TEXT("a few pixels outside still hits"), CrabHud::HitsFoodButton(1280, 720, Food.Min - FVector2D(6.f, 6.f)));
+	TestFalse(TEXT("far outside does not"), CrabHud::HitsFoodButton(1280, 720, Food.Min - FVector2D(60.f, 60.f)));
+	TestFalse(TEXT("FOOD's middle is not BURROW"), CrabHud::HitsBurrowButton(1280, 720, Food.GetCenter()));
+	TestTrue(TEXT("the middle of BURROW hits it"), CrabHud::HitsBurrowButton(1280, 720, Burrow.GetCenter()));
+	TestTrue(TEXT("and a few pixels outside"), CrabHud::HitsBurrowButton(1280, 720, Burrow.Max + FVector2D(6.f, 6.f)));
+	TestFalse(TEXT("BURROW's middle is not FOOD"), CrabHud::HitsFoodButton(1280, 720, Burrow.GetCenter()));
+	TestFalse(TEXT("the middle of the screen is neither"), CrabHud::HitsFoodButton(1280, 720, FVector2D(640.f, 360.f)) || CrabHud::HitsBurrowButton(1280, 720, FVector2D(640.f, 360.f)));
+	TestFalse(TEXT("the MOLT button is not a go-to button"), CrabHud::HitsFoodButton(1280, 720, CrabHud::MoltButtonRect(1280, 720).GetCenter()) || CrabHud::HitsBurrowButton(1280, 720, CrabHud::MoltButtonRect(1280, 720).GetCenter()));
+
+	TestTrue(TEXT("HitsAnyButton: FOOD"), CrabHud::HitsAnyButton(1280, 720, Food.GetCenter()));
+	TestTrue(TEXT("BURROW"), CrabHud::HitsAnyButton(1280, 720, Burrow.GetCenter()));
+	TestTrue(TEXT("MOLT"), CrabHud::HitsAnyButton(1280, 720, CrabHud::MoltButtonRect(1280, 720).GetCenter()));
+	TestTrue(TEXT("DIG"), CrabHud::HitsAnyButton(1280, 720, CrabHud::DigButtonRect(1280, 720).GetCenter()));
+	TestFalse(TEXT("the middle of the view"), CrabHud::HitsAnyButton(1280, 720, FVector2D(640.f, 360.f)));
+	TestFalse(TEXT("the new round button is not one of them: it only lives on the results panel"), CrabHud::HitsAnyButton(1280, 720, CrabHud::NewRoundButtonRect(1280, 720).GetCenter()));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudGaugeTest, "CrabSim.Hud.TheTideGaugeSitsLeftAndItsLabelsAreInsideItsRect", TestFlags)
+bool FCrabHudGaugeTest::RunTest(const FString& Parameters)
+{
+	for (const FIntPoint& View : MoltViews)
+	{
+		const FBox2D Bar = CrabHud::TideGaugeBarRect(View.X, View.Y);
+		const FBox2D Gauge = CrabHud::TideGaugeRect(View.X, View.Y);
+		TestTrue(*FString::Printf(TEXT("at %dx%d the gauge is inside the view"), View.X, View.Y), Gauge.Min.X >= 0.f && Gauge.Min.Y >= 0.f && Gauge.Max.X <= View.X && Gauge.Max.Y <= View.Y);
+		TestTrue(TEXT("and holds the bar"), Gauge.Min.X <= Bar.Min.X && Gauge.Min.Y <= Bar.Min.Y && Gauge.Max.X >= Bar.Max.X && Gauge.Max.Y >= Bar.Max.Y);
+	}
+	const FBox2D Bar = CrabHud::TideGaugeBarRect(1280, 720);
+	TestNearlyEqual(TEXT("the bar is where the HUD always drew it: 30 px in"), static_cast<float>(Bar.Min.X), 30.f, 0.01f);
+	TestNearlyEqual(TEXT("a quarter of the way down"), static_cast<float>(Bar.Min.Y), 180.f, 0.01f);
+	TestNearlyEqual(TEXT("28 wide"), static_cast<float>(Bar.GetSize().X), 28.f, 0.01f);
+	TestNearlyEqual(TEXT("and two fifths of the view tall"), static_cast<float>(Bar.GetSize().Y), 288.f, 0.01f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudHintPanelTest, "CrabSim.Hud.TheHelpPanelIsBottomLeftAndClearOfEverything", TestFlags)
+bool FCrabHudHintPanelTest::RunTest(const FString& Parameters)
+{
+	for (const FIntPoint& View : MoltViews)
+	{
+		const FBox2D Panel = CrabHud::HintPanelRect(View.X, View.Y);
+		TestTrue(*FString::Printf(TEXT("at %dx%d the panel is inside the view"), View.X, View.Y), Panel.Min.X >= 0.f && Panel.Min.Y >= 0.f && Panel.Max.X <= View.X && Panel.Max.Y <= View.Y);
+		TestTrue(TEXT("along the bottom"), Panel.Min.Y > View.Y * 0.5f);
+	}
+	for (const FIntPoint& View : PlayableViews)
+	{
+		const float Scale = CrabHud::ScaleForHeight(View.Y);
+		const FBox2D Panel = CrabHud::HintPanelRect(View.X, View.Y);
+		TestTrue(*FString::Printf(TEXT("at %dx%d it is wide enough for two lines of 40 letters at 16 px (%.0f)"), View.X, View.Y, Panel.GetSize().X), Panel.GetSize().X >= 400.f * Scale);
+		TestTrue(TEXT("and tall enough for two lines at 16 px on a padded panel"), Panel.GetSize().Y >= 2.f * 16.f * Scale * 1.3f + 16.f * Scale);
+		const FBox2D Others[] = {
+			CrabHud::GripBarRect(View.X, View.Y), CrabHud::FoodBarRect(View.X, View.Y),
+			CrabHud::MoltPipRect(View.X, View.Y, 0), CrabHud::MoltPipRect(View.X, View.Y, 2),
+			CrabHud::DigButtonRect(View.X, View.Y), CrabHud::MoltButtonRect(View.X, View.Y),
+			CrabHud::FoodButtonRect(View.X, View.Y), CrabHud::BurrowButtonRect(View.X, View.Y),
+			CrabHud::TideGaugeRect(View.X, View.Y)};
+		for (const FBox2D& Other : Others)
+		{
+			TestFalse(TEXT("it overlaps none of the bars, the pips, the buttons or the gauge"), Overlaps(Panel, Other.ExpandBy(12.f)));
+		}
+		TestFalse(TEXT("and clears the labels above the bars (the GRIP label sits 26 px over the bar)"), Overlaps(Panel, CrabHud::GripBarRect(View.X, View.Y).ExpandBy(FVector2D(0.f, 30.f * Scale))));
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudHintTextTest, "CrabSim.Hud.TheHelpIsShortAndFadesToAHintAfterAMinute", TestFlags)
+bool FCrabHudHintTextTest::RunTest(const FString& Parameters)
+{
+	const CrabHud::FHintText Full = CrabHud::HintText(0.f, false, false);
+	const FString All = Full.First + TEXT(" ") + Full.Second;
+	TestTrue(TEXT("at the start the help says click walks"), All.Contains(TEXT("Click: walk")));
+	TestTrue(TEXT("hold follows"), All.Contains(TEXT("Hold: follow")));
+	TestTrue(TEXT("right click dashes"), All.Contains(TEXT("Right click: dash")));
+	TestTrue(TEXT("clicking the crab dances"), All.Contains(TEXT("Click crab: dance")));
+	TestFalse(TEXT("in two lines"), Full.First.IsEmpty() || Full.Second.IsEmpty());
+	TestTrue(TEXT("each short enough to fit the panel (40 letters)"), Full.First.Len() <= 40 && Full.Second.Len() <= 40);
+	TestTrue(TEXT("the same all through the first minute"), CrabHud::HintText(CrabHud::FullHintSeconds - 0.1f, false, false).First == Full.First
+		&& CrabHud::HintText(CrabHud::FullHintSeconds - 0.1f, true, true).Second == Full.Second);
+
+	const CrabHud::FHintText Later = CrabHud::HintText(CrabHud::FullHintSeconds, false, false);
+	TestTrue(TEXT("after a minute it is one shorter line"), Later.Second.IsEmpty() && !Later.First.IsEmpty() && Later.First.Len() < All.Len());
+	TestTrue(TEXT("still fits"), Later.First.Len() <= 40);
+	TestTrue(TEXT("in a burrow it says how to come out"), CrabHud::HintText(120.f, true, false).First.Contains(TEXT("come out")));
+	TestTrue(TEXT("molting it says how to cancel"), CrabHud::HintText(120.f, true, true).First.Contains(TEXT("cancel")));
+	TestTrue(TEXT("and every hint fits"), CrabHud::HintText(120.f, true, true).First.Len() <= 40 && CrabHud::HintText(120.f, true, false).First.Len() <= 40);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudEchoTest, "CrabSim.Hud.AMessageThatRepeatsAButtonReasonIsLeftOut", TestFlags)
+bool FCrabHudEchoTest::RunTest(const FString& Parameters)
+{
+	TestTrue(TEXT("the same words"), CrabHud::EchoesReason(TEXT("Molt needs a burrow"), TEXT("Molt needs a burrow")));
+	TestTrue(TEXT("whatever the case"), CrabHud::EchoesReason(TEXT("Cannot dig: too close to a burrow"), TEXT("Too close to a burrow")));
+	TestTrue(TEXT("after a lead-in"), CrabHud::EchoesReason(TEXT("Cannot dig: not enough food"), TEXT("Not enough food")));
+	TestFalse(TEXT("another line is not an echo"), CrabHud::EchoesReason(TEXT("Dug in"), TEXT("Molt needs a burrow")));
+	TestFalse(TEXT("a different reason is not"), CrabHud::EchoesReason(TEXT("Molt needs more food"), TEXT("Molt needs a burrow")));
+	TestFalse(TEXT("no reason on show, nothing to echo"), CrabHud::EchoesReason(TEXT("Dug in"), FString()));
+	TestFalse(TEXT("nor for an empty message"), CrabHud::EchoesReason(FString(), TEXT("Molt needs a burrow")));
+	return true;
+}

@@ -48,6 +48,22 @@ struct CRABSIM_API FCrabTideSettings
 		return TideLevelAt(Time) + SwellHeight * FMath::Sin(2.f * PI * Time / SwellPeriod);
 	}
 
+	/**
+	 * Seconds from Time until the surface first stands above Level, looking ahead at most Horizon seconds in
+	 * Step seconds. 0 if it does already, BIG_NUMBER if it does not within the horizon.
+	 */
+	float SecondsUntilSurfaceAbove(float Time, float Level, float Horizon, float Step = 0.5f) const
+	{
+		for (float Ahead = 0.f; Ahead <= Horizon; Ahead += FMath::Max(Step, KINDA_SMALL_NUMBER))
+		{
+			if (SurfaceLevelAt(Time + Ahead) > Level)
+			{
+				return Ahead;
+			}
+		}
+		return BIG_NUMBER;
+	}
+
 	/** 0 at low tide, 1 at high tide. */
 	float FractionAt(float Time) const
 	{
