@@ -67,6 +67,21 @@ static TAutoConsoleVariable<float> CVarStickTapGap(
 	TEXT("One-stick taps this close together, end to start, chain together. The chain closes, committing a pending select, when this passes with no new tap."),
 	ECVF_Default);
 
+static TAutoConsoleVariable<float> CVarOrbitStartPixels(
+	TEXT("CrabSim.OrbitStartPixels"), CrabOrbit::FTuning().StartPixels,
+	TEXT("How far the pointer must move with the right button down, px, before the press orbits the camera instead of dashing."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarOrbitDegreesPerPixel(
+	TEXT("CrabSim.OrbitDegreesPerPixel"), CrabOrbit::FTuning().DegreesPerPixel,
+	TEXT("Camera yaw per pixel of sideways pointer travel while orbiting, degrees. Negative turns the other way."),
+	ECVF_Default);
+
+static TAutoConsoleVariable<float> CVarOrbitPitchDegreesPerPixel(
+	TEXT("CrabSim.OrbitPitchDegreesPerPixel"), CrabOrbit::FTuning().PitchDegreesPerPixel,
+	TEXT("Camera pitch per pixel of up and down pointer travel while orbiting, degrees. Pointer up lowers the camera. Negative swaps up and down."),
+	ECVF_Default);
+
 static TAutoConsoleVariable<float> CVarStickMinSpeed(
 	TEXT("CrabSim.StickMinSpeed"), CrabStick::FTuning().MinSpeed,
 	TEXT("One-stick STEER's walk speed multiplier at Inner deflection, ramping up to 1 at full deflection (CrabStick::SteerSpeedMultiplier)."),
@@ -425,10 +440,7 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 		}
 	}
 
-	if (bHavePoint && WasInputKeyJustPressed(EKeys::RightMouseButton))
-	{
-		Crab->TryDash(Point);
-	}
+	UpdateRightButton(*Crab, bHaveMouse, Screen, bHavePoint, Point);
 
 	// F2 is a single key, for a player who types on an on-screen keyboard that sends one key at a time.
 	if (WasInputKeyJustPressed(EKeys::F2))
@@ -441,6 +453,35 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 	}
 }
 
+void ACrabPlayerController::UpdateRightButton(ACrabPawn& Crab, bool bHaveMouse, const FVector2D& Screen, bool bHavePoint, const FVector& Point)
+{
+	CrabOrbit::FTuning Tuning;
+	Tuning.StartPixels = CVarOrbitStartPixels.GetValueOnGameThread();
+	Tuning.DegreesPerPixel = CVarOrbitDegreesPerPixel.GetValueOnGameThread();
+	Tuning.PitchDegreesPerPixel = CVarOrbitPitchDegreesPerPixel.GetValueOnGameThread();
+
+	// A press and release inside one frame still counts as a press: it comes up, and dashes, the next frame.
+	const bool bDown = IsInputKeyDown(EKeys::RightMouseButton) || WasInputKeyJustPressed(EKeys::RightMouseButton);
+	const bool bWasOrbiting = OrbitDrag.IsOrbiting();
+	const CrabOrbit::FStep Step = OrbitDrag.Update(bDown, bHaveMouse ? Screen : OrbitDrag.GetLastPointer(), Tuning);
+	if (Step.YawDelta != 0.f)
+	{
+		Crab.AddCameraYaw(Step.YawDelta);
+	}
+	if (Step.PitchDelta != 0.f)
+	{
+		Crab.AddCameraPitch(Step.PitchDelta);
+	}
+	if (OrbitDrag.IsOrbiting() != bWasOrbiting)
+	{
+		LogInputEvent(bWasOrbiting ? TEXT("orbit_end") : TEXT("orbit_start"), FString::Printf(TEXT("cam=%.1f pitch=%.1f"), Crab.GetCameraYaw(), Crab.GetCameraPitch()));
+	}
+	if (Step.bClick && bHavePoint)
+	{
+		Crab.TryDash(Point);
+	}
+}
+
 // --- One-stick mode -------------------------------------------------------------------------------------
 
 void ACrabPlayerController::ToggleOneStick()
@@ -448,7 +489,7 @@ void ACrabPlayerController::ToggleOneStick()
 	IConsoleVariable* CVar = CVarOneStick.AsVariable();
 	const bool bNewValue = CVar->GetInt() == 0;
 	CVar->Set(bNewValue ? 1 : 0, ECVF_SetByCode);
-	LogOneStickEvent(bNewValue ? TEXT("onestick_on") : TEXT("onestick_off"));
+	LogInputEvent(bNewValue ? TEXT("onestick_on") : TEXT("onestick_off"));
 	// Whichever way it was flipped, and however STEER was left, walking speed goes back to normal.
 	if (ACrabPawn* Crab = Cast<ACrabPawn>(GetPawn()))
 	{
@@ -504,7 +545,7 @@ void ACrabPlayerController::DispatchOneStickSelect(ACrabPawn& Crab, CrabStick::E
 	}
 }
 
-void ACrabPlayerController::LogOneStickEvent(const TCHAR* Name, const FString& Detail) const
+void ACrabPlayerController::LogInputEvent(const TCHAR* Name, const FString& Detail) const
 {
 	const IConsoleVariable* StateLog = IConsoleManager::Get().FindConsoleVariable(TEXT("CrabSim.StateLog"));
 	if (!StateLog || StateLog->GetInt() == 0)
@@ -547,7 +588,7 @@ void ACrabPlayerController::UpdateOneStick(ACrabPawn& Crab, float DeltaTime)
 	ClickTapDetector.Update(DeltaTime, bClickDown, Taps);
 	for (const CrabStick::FTap& Tap : Taps)
 	{
-		LogOneStickEvent(TEXT("tap"), FString::Printf(TEXT("dir=%s"), CrabStick::TapDirText(Tap)));
+		LogInputEvent(TEXT("tap"), FString::Printf(TEXT("dir=%s"), CrabStick::TapDirText(Tap)));
 	}
 
 	const CrabStick::EMode PreviousMode = MenuState.GetMode();
@@ -556,20 +597,20 @@ void ACrabPlayerController::UpdateOneStick(ACrabPawn& Crab, float DeltaTime)
 
 	if (Result.bCursorMoved && MenuState.GetCursor() != PreviousCursor)
 	{
-		LogOneStickEvent(TEXT("cursor"), FString::Printf(TEXT("cursor=%s"), CrabStick::ItemLabel(MenuState.GetCursor())));
+		LogInputEvent(TEXT("cursor"), FString::Printf(TEXT("cursor=%s"), CrabStick::ItemLabel(MenuState.GetCursor())));
 	}
 	if (Result.bSelected)
 	{
-		LogOneStickEvent(TEXT("select"), FString::Printf(TEXT("select=%s"), CrabStick::ItemLabel(Result.SelectedItem)));
+		LogInputEvent(TEXT("select"), FString::Printf(TEXT("select=%s"), CrabStick::ItemLabel(Result.SelectedItem)));
 		DispatchOneStickSelect(Crab, Result.SelectedItem);
 	}
 	if (Result.bTripleTapped)
 	{
-		LogOneStickEvent(TEXT("toggle"));
+		LogInputEvent(TEXT("toggle"));
 	}
 	if (Result.bModeChanged && MenuState.GetMode() != PreviousMode)
 	{
-		LogOneStickEvent(TEXT("mode"), FString::Printf(TEXT("mode=%s"), CrabStick::ModeLabel(MenuState.GetMode())));
+		LogInputEvent(TEXT("mode"), FString::Printf(TEXT("mode=%s"), CrabStick::ModeLabel(MenuState.GetMode())));
 		if (MenuState.GetMode() == CrabStick::EMode::Menu)
 		{
 			// Leaving STEER stops the crab: there is no cursor-restore equivalent for a walk under way.
@@ -579,10 +620,10 @@ void ACrabPlayerController::UpdateOneStick(ACrabPawn& Crab, float DeltaTime)
 
 	if (MenuState.GetMode() == CrabStick::EMode::Steer)
 	{
-		// The camera looks along +X with +Y on its right (see CrabHud::GullArrowDirection): stick up (Y)
-		// drives world +X, stick right (X) drives world +Y, so up on the stick is up on screen.
+		// Screen-relative: stick up drives the camera's forward and stick right its right, whatever way the
+		// camera has been orbited (at yaw 0, world +X and +Y), so up on the stick is up on screen.
 		const float Magnitude = Stick.Size();
-		FVector2D Direction(Stick.Y, Stick.X);
+		FVector2D Direction = CrabOrbit::ScreenToWorld(Stick, Crab.GetCameraYaw());
 		if (Magnitude >= Tuning.Inner && Direction.Normalize())
 		{
 			const FVector Target = Crab.GetActorLocation() + FVector(Direction.X, Direction.Y, 0.f) * OneStickSteerAheadDistance;

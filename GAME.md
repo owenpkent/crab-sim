@@ -11,7 +11,7 @@ is a real courtship dance, so "crab dance" is the species' own behaviour, not a 
 
 ## The tide (built)
 
-A 180 second cycle, low to high to low. The sea is ahead of the crab (world +X, the camera looks that way),
+A 180 second cycle, low to high to low. The sea is ahead of the crab (world +X, the way the camera looks until it is orbited),
 the dunes behind it. A swell rides on the tide so the water line breathes in and out.
 
 - Low tide: the flats are open. Nothing costs anything.
@@ -257,12 +257,12 @@ player with no other input is built on top of it: see "One-stick mode" below.
 - Left click the crab: dance on or off. Begun early enough, a dance scares off a gull.
 - A gull: no input of its own. The BURROW button is the answer, a dance begun in time the second. The banner and arrow
   are drawn only: neither takes a click, and a click under the arrow is an ordinary click.
-- Right click: dash toward the cursor, 1.2 s cooldown.
-- Camera is fixed-angle and follows the crab. No rotation, no zoom.
+- Right click: dash toward the cursor, 1.2 s cooldown. It fires when the button comes up.
+- Hold right and drag: orbit the camera freely round the crab. See "Camera" below.
 - The help is a dark panel, bottom left, in two lines at least 16 px tall ("Click: walk. Hold: follow." and
   "Right click: dash. Click crab: dance."). After the first minute of a round it gives way to one short hint for what
-  the crab is doing ("Click elsewhere to come out.", "Molting. Click elsewhere to cancel.", "Click: walk. Right
-  click: dash.", and with a gull down "Gull! Press BURROW, or dance." or, in a burrow, "Gull outside. Stay in until it goes."). It stays clear of the grip and food bars and the molts pips, and is not shown while the results panel is up.
+  the crab is doing ("Click elsewhere to come out.", "Molting. Click elsewhere to cancel.", "Right click: dash.
+  Right drag: orbit.", and with a gull down "Gull! Press BURROW, or dance." or, in a burrow, "Gull outside. Stay in until it goes."). It stays clear of the grip and food bars and the molts pips, and is not shown while the results panel is up.
 
 The dash is on the right button, not a drag, because a held left button already means "follow the cursor".
 Drag and hold are the same gesture there. Pinch is not built yet and will get a button that is not left click.
@@ -292,8 +292,9 @@ Two modes:
   it does exactly what the results panel's button does, so a stick-only player can start the next round without
   a mouse. The round ending or a new one starting always snaps the cursor to the first item of whichever list is
   now showing and forces MENU, so the cursor is never left pointing at an item that just vanished.
-- **STEER.** The stick's analog XY drives the crab directly and screen-relative (stick up is up on screen: the
-  camera looks along world +X with +Y on its right, so world X takes the stick's Y and world Y takes its X),
+- **STEER.** The stick's analog XY drives the crab directly and screen-relative (stick up is up on screen: stick
+  up drives the camera's forward and stick right its right, `CrabOrbit::ScreenToWorld`; at camera yaw 0 that is
+  world +X and +Y),
   through the same movement path "hold left to follow the cursor" uses: a point some distance ahead of the crab,
   reset every tick, so it never arrives and stops on its own. Walk speed scales with how far the stick is pushed,
   `CrabStick::SteerSpeedMultiplier`: `CrabSim.StickMinSpeed` (default 0.35) at Inner deflection, ramping linearly
@@ -342,7 +343,31 @@ uinput, the same way the live test's virtual mouse works) through the menu, STEE
 and the toggle button; forcing a round to end without the tide or a gull is not cheap to script live, so
 NEW ROUND is unit tested instead. `RECORD_TOUR=onestick Scripts/record.sh` records a tour of the same ground.
 
-The camera is fixed, so there is no camera steer yet: STEER only ever drives the crab.
+STEER only ever drives the crab; the camera is orbited with the right button, and STEER follows it.
+
+## Camera (built)
+
+Follows the crab from behind and above, pitched 38 degrees down, looking toward the sea (+X) at the start. Hold
+the right button and drag to orbit it freely round the crab, which stays the point it turns about:
+
+- Sideways travel turns the view round the crab, no limit: pointer right turns the view right, 0.3 degrees per
+  pixel (`CrabSim.OrbitDegreesPerPixel`), so a drag across a 1280 px view is more than a full turn.
+- Up and down travel swings the camera lower or higher over it, 0.3 degrees per pixel
+  (`CrabSim.OrbitPitchDegreesPerPixel`, negative swaps the two): pointer up brings it down toward the sand,
+  looking across the beach, pointer down lifts it to look down on the crab. Clamped between 10 and 85 degrees
+  down (`CrabOrbit::MinPitch`, `MaxPitch`), so it never goes under the sand or flips over the top.
+- The distance stays put and there is no zoom. The pointer stays visible while orbiting, locked inside the view;
+  to keep going, let go and drag again.
+
+A right press is an orbit once the pointer has moved more than 10 px from where it went down
+(`CrabSim.OrbitStartPixels`); under that, it is a right click and dashes when the button comes up. Distance
+tells the two apart, never time, so a press held still for as long as it takes is still a dash. Rules in
+`Source/CrabSim/CrabOrbitMath.h`, unit tested.
+
+What turns with the camera: the dance and the peek over a burrow keep facing it, the gull arrow points the way
+the gull is on screen (foreshortened by the pitch), and one-stick STEER stays screen-relative. The orbit is kept
+from round to round. With `CrabSim.StateLog 1` every state line ends with `cam=<yaw> pitch=<pitch>`, and
+`orbit_start` and `orbit_end` events log both.
 
 ## Movement
 

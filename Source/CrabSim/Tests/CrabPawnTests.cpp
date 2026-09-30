@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Misc/AutomationTest.h"
+#include "CrabOrbitMath.h"
 #include "CrabTestHelpers.h"
 #include "CrabMovementMath.h"
 #include "CrabSurvivalMath.h"
@@ -268,6 +269,16 @@ bool FCrabPawnDanceTest::RunTest(const FString& Parameters)
 	TestNearlyEqual(TEXT("faces the camera"), FMath::Abs(Yaw(*Rig.Crab)), 180.f, 2.f);
 	TestTrue(TEXT("holds its ground"), Speed(*Rig.Crab) < 15.f);
 	TestEqual(TEXT("dance animation state"), Rig.Crab->GetAnimState(), ECrabAnim::Dance);
+
+	// Orbit the camera a quarter turn: the dancer turns to keep facing it.
+	Rig.Crab->SetCameraYaw(90.f);
+	Rig.World.TickSeconds(1.5f);
+	TestNearlyEqual(TEXT("faces the orbited camera"), Yaw(*Rig.Crab), -90.f, 2.f);
+	Rig.Crab->SetCameraYaw(0.f);
+	Rig.World.TickSeconds(1.5f);
+	Rig.Crab->SetCameraPitch(-200.f);
+	TestEqual(TEXT("the camera's pitch is clamped short of straight down"), Rig.Crab->GetCameraPitch(), CrabOrbit::MinPitch);
+	Rig.Crab->SetCameraPitch(-38.f);
 
 	const FVector Before = Rig.Crab->GetActorLocation();
 	Rig.World.TickSeconds(1.f);

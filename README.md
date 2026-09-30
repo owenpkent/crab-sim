@@ -37,20 +37,21 @@ assets that need network access to fetch.
   is never a twitch: 25 s at least from the first circle to a possible catch, and a crab that is moving, or in a
   burrow, is never caught. Press BURROW (or dance early) and it gives up.
 - Right click: dash toward the cursor.
+- Hold right and drag: orbit the camera freely round the crab (sideways all the way round, up and down over it).
 
 ## Layout
 
 - `Source/CrabSim/`: game module
   - `CrabMovementMath.h`, `CrabTerrainMath.h`, `CrabTide.h`, `CrabSurvivalMath.h`, `CrabFoodMath.h`,
     `CrabDigMath.h`, `CrabMoltMath.h` (molting, the round, and every pacing number in `CrabMolt::Tuning`),
-    `CrabGotoMath.h` (what FOOD and BURROW pick), `CrabGullMath.h` (the gull's state machine, spawn rules and every
+    `CrabGotoMath.h` (what FOOD and BURROW pick), `CrabOrbitMath.h` (the right-drag camera orbit), `CrabGullMath.h` (the gull's state machine, spawn rules and every
     number that paces it, in `CrabGull::Tuning`), `CrabPickMath.h` (the on-screen click zones), `CrabHudMath.h`: the
     rules and the HUD layout, pure functions
   - `CrabPawn`: the crab, its camera, dance, burrow, grip, food, digging, molting and the round, its go-to
     buttons' logic, and its shape-built stand-in visual (and the stand-in that peeks over a hole)
   - `CrabGull`: the gull actor: it runs `CrabGullMath.h` against the crab and the beach, eats a patch, ends the
     round on a catch, and draws itself from engine shapes (body, flapping wings, bill, legs, shadow, ring)
-  - `CrabPlayerController`: pointer input
+  - `CrabPlayerController`: pointer input, and the right button's dash or camera orbit
   - `CrabBeach`: the terrain and water meshes, the tide clock, burrows (authored and dug), food patches, rocks and props
   - `CrabHUD`: tide gauge, grip and food bars, the FOOD, BURROW, dig and molt buttons, molt pips, soft tag, messages,
     the help panel, the gull banner and arrow, results panel (fully grown, or eaten by a gull)
@@ -74,6 +75,7 @@ Scripts/shot.sh out.png   screenshot the running game window
 Scripts/record.sh [out.mp4]   record a scripted tour of the game as video (default videos/crab-sim-tour.mp4)
 RECORD_TOUR=molt Scripts/record.sh   record the molt tour instead (default videos/crab-sim-molt.mp4)
 RECORD_TOUR=playtest SPEEDUP=4 CRF=30 Scripts/record.sh   a bot plays one whole round (10 to 15 min, videos/crab-sim-playtest.mp4)
+RECORD_TOUR=orbit Scripts/record.sh   the free camera orbit (about 60 s, videos/crab-sim-orbit.mp4)
 ```
 
 `live-test.sh` opens a window and moves the real pointer for a few minutes: one game launch per scenario (`basic`,
@@ -117,6 +119,15 @@ the round again. The other scenarios run with `CrabSim.Gulls 0`, so a natural gu
 
 ```
 LIVE_SCENARIOS=gull Scripts/live-test.sh
+```
+
+The `orbit` scenario (about half a minute, tide frozen) holds the right button and drags: 300 px right turns the
+camera about 90 degrees round the crab with no dash while held (`orbit_start`, `orbit_end`), a right click that does
+not move still dashes on release and leaves the camera alone, 300 px left turns it back, and 100 px down then up
+tilts it about 30 degrees toward overhead and back. Run it alone with:
+
+```
+LIVE_SCENARIOS=orbit Scripts/live-test.sh
 ```
 
 `record.sh` launches the game, plays a 90 second tour through the same virtual pointer (feed on a patch, dig a
@@ -163,4 +174,7 @@ Console variables and commands:
 - `CrabSim.Gulls <0|1>`: 0 keeps every gull away (the tours and the older live scenarios run with it), 1 is the game.
 - `CrabSim.GullForce 1`: test only, off by default. Sends a gull as soon as there is none and the crab is out of its
   burrow: no first minute, no 25 s wait, no cooldown. The `gull` live scenario runs with it.
+- `CrabSim.OrbitDegreesPerPixel <deg>`, `CrabSim.OrbitPitchDegreesPerPixel <deg>`, `CrabSim.OrbitStartPixels <px>`:
+  the right-drag orbit's yaw and pitch rates (negative flips one), and how far a right press must move before it
+  orbits instead of dashing.
 - `CrabSim.CameraDistance <uu>`, `CrabSim.CameraPitch <deg>`: camera. 7000 shows the whole map

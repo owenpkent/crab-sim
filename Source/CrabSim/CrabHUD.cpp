@@ -520,7 +520,8 @@ void ACrabHUD::DrawGullWarning(const ACrabPawn& Crab, const ACrabGull& Gull, flo
 
 	// The arrow: at the edge of the view, toward the gull, with how far it is under it. Not a button.
 	const FVector Where = Crab.GetActorLocation();
-	FVector2D Direction = CrabHud::GullArrowDirection(FVector2D(Where.X, Where.Y), Gull.GetGroundLocation());
+	FVector2D Direction = CrabHud::GullArrowDirection(FVector2D(Where.X, Where.Y), Gull.GetGroundLocation(), Crab.GetCameraYaw(),
+		CrabOrbit::GroundForeshortening(Crab.GetCameraPitch()));
 	// A gull that is on screen is kept clear of, and the arrow points at it from where it sits.
 	const FVector Seen = Project(Gull.GetActorLocation() + FVector(0.f, 0.f, 60.f));
 	const bool bOnScreen = Seen.Z > 0.f && Seen.X > 0.f && Seen.X < ViewW && Seen.Y > 0.f && Seen.Y < ViewH;

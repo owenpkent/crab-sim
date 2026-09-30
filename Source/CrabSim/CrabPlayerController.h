@@ -3,6 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "CrabOrbitMath.h"
 #include "CrabStickMath.h"
 #include "CrabPlayerController.generated.h"
 
@@ -30,9 +31,12 @@ struct FCrabPointer
  * - Click the HUD's molt button, in a burrow: molt. Leaving the burrow cancels it.
  * - Click the new round button on the results panel: start again.
  * - Click the crab: start or stop its dance.
- * - Right click: dash toward the cursor.
+ * - Right click: dash toward the cursor, when the button comes up.
+ * - Hold the right button and drag: orbit the camera freely round the crab, sideways all the way round, up and
+ *   down between low over the sand and near straight down. Past a few pixels of travel the press is an orbit,
+ *   not a click, and does not dash (CrabOrbitMath.h).
  *
- * With CrabSim.OneStick 1, every step above is replaced except the buttons and right click: the left
+ * With CrabSim.OneStick 1, every step above is replaced except the buttons and the right button: the left
  * stick and left click instead drive a MENU/STEER scheme for a player with no other input. See GAME.md,
  * "One-stick mode", and CrabStickMath.h for the pure rules.
  */
@@ -139,7 +143,13 @@ private:
 	/** True if the pixel is on any button a mouse click must not also register as a one-stick tap for. */
 	bool IsOverOneStickHudControl(const FVector2D& ViewSize, const FVector2D& ScreenPos, bool bRoundOver) const;
 
-	void LogOneStickEvent(const TCHAR* Name, const FString& Detail = FString()) const;
+	/** A CRABSIM_EVENT line, with CrabSim.StateLog on: one-stick events, and orbit_start and orbit_end. */
+	void LogInputEvent(const TCHAR* Name, const FString& Detail = FString()) const;
+
+	/** The right button: a click dashes, a drag orbits the camera. */
+	void UpdateRightButton(ACrabPawn& Crab, bool bHaveMouse, const FVector2D& Screen, bool bHavePoint, const FVector& Point);
+
+	CrabOrbit::FDrag OrbitDrag;
 
 	CrabStick::FStickTapDetector StickTapDetector;
 	CrabStick::FClickTapDetector ClickTapDetector;

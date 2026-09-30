@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CrabPawn.h"
+#include "CrabOrbitMath.h"
 #include "CrabSim.h"
 #include "CrabBeach.h"
 #include "CrabMovementMath.h"
@@ -116,11 +117,11 @@ ACrabPawn::ACrabPawn()
 	Move->BrakingDecelerationWalking = 3000.f;
 	Move->GroundFriction = 8.f;
 
-	// Fixed-angle camera looking along +X, toward the sea: no rotation to manage.
+	// Fixed-pitch camera looking along +X, toward the sea, until the player orbits it (a right drag, CrabOrbitMath.h).
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(GetCapsuleComponent());
 	CameraBoom->SetUsingAbsoluteRotation(true);
-	CameraBoom->SetRelativeRotation(FRotator(-38.f, 0.f, 0.f));
+	CameraBoom->SetRelativeRotation(FRotator(CameraPitch, 0.f, 0.f));
 	CameraBoom->TargetArmLength = 1000.f;
 	CameraBoom->bDoCollisionTest = false;
 	CameraBoom->bUsePawnControlRotation = false;
@@ -1261,7 +1262,7 @@ void ACrabPawn::UpdateWalking(float DeltaSeconds)
 	{
 		// The crab turns to face the camera and holds its ground.
 		const float CurrentYaw = GetActorRotation().Yaw;
-		SetActorRotation(FRotator(0.f, FMath::FixedTurn(CurrentYaw, DanceFacingYaw, TurnRate * DeltaSeconds), 0.f));
+		SetActorRotation(FRotator(0.f, FMath::FixedTurn(CurrentYaw, FRotator::NormalizeAxis(CameraYaw + DanceFacingYaw), TurnRate * DeltaSeconds), 0.f));
 		return;
 	}
 	else if (bHasTarget)
@@ -1424,6 +1425,33 @@ void ACrabPawn::UpdateWorkPose(float DeltaSeconds)
 	}
 }
 
+void ACrabPawn::SetCameraYaw(float Degrees)
+{
+	CameraYaw = FRotator::NormalizeAxis(Degrees);
+	ApplyCameraRotation();
+}
+
+void ACrabPawn::SetCameraPitch(float Degrees)
+{
+	CameraPitch = CrabOrbit::ClampPitch(Degrees);
+	ApplyCameraRotation();
+}
+
+void ACrabPawn::ApplyCameraRotation()
+{
+	const float PitchOverride = CVarCameraPitch.GetValueOnGameThread();
+	if (PitchOverride != LastPitchOverride)
+	{
+		LastPitchOverride = PitchOverride;
+		if (PitchOverride != 0.f)
+		{
+			CameraPitch = PitchOverride;
+		}
+	}
+	CameraBoom->SetRelativeRotation(FRotator(CameraPitch, CameraYaw, 0.f));
+	PeekRoot->SetRelativeRotation(FRotator(0.f, CameraYaw + 180.f, 0.f));
+}
+
 void ACrabPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
@@ -1436,11 +1464,7 @@ void ACrabPawn::Tick(float DeltaSeconds)
 	{
 		CameraBoom->TargetArmLength = CameraDistance;
 	}
-	const float CameraPitch = CVarCameraPitch.GetValueOnGameThread();
-	if (CameraPitch != 0.f)
-	{
-		CameraBoom->SetRelativeRotation(FRotator(CameraPitch, 0.f, 0.f));
-	}
+	ApplyCameraRotation();
 
 	if (!bRoundOver)
 	{
@@ -1474,11 +1498,11 @@ void ACrabPawn::LogState() const
 	const FString Target = bHasTarget ? FString::Printf(TEXT("%.1f,%.1f"), MoveTarget.X, MoveTarget.Y) : FString(TEXT("none"));
 	const ACrabBeach* Beach = GetBeach();
 	// The live test parses everything up to dash=. New fields go after it.
-	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d molts=%d molt=%.2f soft=%.1f over=%d scale=%.3f eaten=%d"),
+	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d molts=%d molt=%.2f soft=%.1f over=%d scale=%.3f eaten=%d cam=%.1f pitch=%.1f"),
 		GetWorld()->GetTimeSeconds(), Location.X, Location.Y, Location.Z,
 		FRotator::NormalizeAxis(GetActorRotation().Yaw), GetCharacterMovement()->Velocity.Size2D(), *Target, IsDashing() ? 1 : 0,
 		Grip, WaterDepth, Beach ? Beach->GetSurfaceLevel() : 0.f, Beach ? Beach->GetTideFraction() : 0.f,
 		CurrentBurrow, bDancing ? 1 : 0, AnimName(AnimState), bUseSkeletalMesh ? 1 : 0, SweptCount,
 		Food, FeedingPatch, GetDigProgress(), Beach ? Beach->GetDugBurrowCount() : 0,
-		Molts, GetMoltProgress(), SoftRemaining, bRoundOver ? 1 : 0, ShownGrowth, bEaten ? 1 : 0);
+		Molts, GetMoltProgress(), SoftRemaining, bRoundOver ? 1 : 0, ShownGrowth, bEaten ? 1 : 0, CameraYaw, CameraPitch);
 }

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "CrabOrbitMath.h"
 
 /**
  * Where things sit on the HUD, as pure functions of the view size, so the
@@ -216,13 +217,15 @@ namespace CrabHud
 	}
 
 	/**
-	 * Which way the gull is on screen, as a unit vector from the middle of the view (x right, y down). The camera
-	 * is fixed and looks toward +X with +Y on its right, so a gull further along +X is up, and one at +Y is right.
-	 * Up is foreshortened by the pitch. Up when the gull is on the crab.
+	 * Which way the gull is on screen, as a unit vector from the middle of the view (x right, y down). A gull
+	 * further along the camera's forward is up and one to its right is right: at camera yaw 0 the camera looks
+	 * toward +X with +Y on its right. Up is foreshortened by the pitch (Foreshortening, CrabOrbit::GroundForeshortening
+	 * for an orbited camera). Up when the gull is on the crab.
 	 */
-	inline FVector2D GullArrowDirection(const FVector2D& CrabXY, const FVector2D& GullXY)
+	inline FVector2D GullArrowDirection(const FVector2D& CrabXY, const FVector2D& GullXY, float CameraYaw = 0.f, float Foreshortening = GroundForeshortening)
 	{
-		FVector2D Screen(GullXY.Y - CrabXY.Y, -(GullXY.X - CrabXY.X) * GroundForeshortening);
+		const FVector2D Seen = CrabOrbit::WorldToCamera(GullXY - CrabXY, CameraYaw);
+		FVector2D Screen(Seen.X, -Seen.Y * Foreshortening);
 		if (!Screen.Normalize())
 		{
 			return FVector2D(0.0, -1.0);
@@ -389,7 +392,7 @@ namespace CrabHud
 		{
 			return {TEXT("Gull! Press BURROW, or dance."), FString()};
 		}
-		return {TEXT("Click: walk. Right click: dash."), FString()};
+		return {TEXT("Right click: dash. Right drag: orbit."), FString()};
 	}
 
 	/**
