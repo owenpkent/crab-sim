@@ -26,7 +26,9 @@ Usage: session.py <game log> <output dir> [game pid] [scenario]
   (CrabSim.GullForce 1 brings a gull at once: answer it with the BURROW button and dig in so it gives
   up, then leave the burrow and stand still to be eaten, and start a new round; the tide is frozen at
   low water) or "onestick" (CrabSim.OneStick 1: a virtual gamepad's left stick, from gamepad.py, drives
-  MENU and STEER; the mouse still does clicks and taps; the tide is frozen at low water).
+  MENU and STEER; the mouse still does clicks and taps; the tide is frozen at low water) or "orbit"
+  (CrabSim.Gulls 0, tide frozen at low water: holding the right button and dragging the pointer sideways
+  orbits the camera, and a right click that does not move still dashes, now on release instead of on press).
 
 Time limits are in game seconds (the t= field), which run at real time. Each
 wait also has a wall-clock guard so a stalled game cannot hang the run.
@@ -161,6 +163,28 @@ STICK_STOP_WINDOW = 1.0      # s from mode=menu to the crab's target clearing (i
 STICK_PARTIAL = 0.6          # partial deflection: CrabStick::SteerSpeedMultiplier(0.6, defaults) is about 0.675
 STICK_PARTIAL_SLOWER_FACTOR = 0.85  # the partial-deflection distance must be under this fraction of the full one
 
+# orbit (TideSpeed 0, CrabSim.Gulls 0, as for the other pointer scenarios). Holding the right button and moving
+# the pointer orbits the camera: sideways changes yaw, up and down changes pitch (no edge hold: the pointer is
+# free, just locked inside the view while held). A right click that does not move still dashes, on release.
+# Defaults are CrabSim.OrbitStartPixels 10, CrabSim.OrbitDegreesPerPixel 0.3 (a quarter turn of yaw in 300 px)
+# and CrabSim.OrbitPitchDegreesPerPixel 0.3. Pitch is clamped to [-85, -10] and starts at -38.
+ORBIT_SETTLE = 1.0            # s the crab is left alone before the sweep, so cam is read at rest
+ORBIT_STEPS = 10              # small steps a sweep is broken into
+ORBIT_STEP_SLEEP = 0.05       # s between steps
+ORBIT_SWEEP_PX = 300.0        # px the pointer moves in x while the right button is held, for the yaw checks
+ORBIT_EVENT_WINDOW = 2.0      # s from the press to orbit_start/orbit_end, and for the no-dash and cam checks
+ORBIT_CAM_START_TOL = 5.0     # deg cam may be off 0 once the crab has settled, before any input
+ORBIT_CAM_MIN = 60.0          # deg the camera must turn for a 300 px sweep (300 * 0.3 = 90)
+ORBIT_CAM_MAX = 120.0
+ORBIT_CAM_HOME_TOL = 30.0     # deg cam may sit off 0 once the sweep is undone
+ORBIT_CAM_STILL_TOL = 2.0     # deg cam/pitch may drift on a plain right click, or on the other axis of a
+                               # straight drag (rounding only: it must not orbit, or not cross-couple)
+ORBIT_PITCH_DRAG_PX = 100.0   # px the pointer moves in y for the pitch checks
+ORBIT_PITCH_START = -38.0     # deg pitch starts at, and returns to
+ORBIT_PITCH_FALL_MIN = 20.0   # deg pitch must fall for a 100 px downward drag (100 * 0.3 = 30)
+ORBIT_PITCH_FALL_MAX = 40.0
+ORBIT_PITCH_HOME_TOL = 10.0   # deg pitch may sit off its start once the drag is undone
+
 # tide (TideSpeed 10: a whole tide is 18 s). The limits below are for that speed; LIVE_TIDE_SPEED
 # below 10 stretches the tide-clock ones (rise, swept, fall) by 10/speed.
 try:
@@ -190,7 +214,8 @@ STATE_RE = re.compile(
     r"(?:\s+anim=(?P<anim>\w+))?(?:\s+skel=(?P<skel>\d+))?(?:\s+swept=(?P<swept>\d+))?"
     r"(?:\s+food=(?P<food>{n}))?(?:\s+feeding=(?P<feeding>-?\d+))?(?:\s+dig=(?P<dig>{n}))?(?:\s+dug=(?P<dug>\d+))?"
     r"(?:\s+molts=(?P<molts>\d+))?(?:\s+molt=(?P<molt>{n}))?(?:\s+soft=(?P<soft>{n}))?(?:\s+over=(?P<over>[01]))?"
-    r"(?:\s+scale=(?P<scale>{n}))?(?:\s+eaten=(?P<eaten>[01]))?".format(n=_NUM))
+    r"(?:\s+scale=(?P<scale>{n}))?(?:\s+eaten=(?P<eaten>[01]))?(?:\s+cam=(?P<cam>{n}))?"
+    r"(?:\s+pitch=(?P<pitch>{n}))?".format(n=_NUM))
 # Anything after t= is detail (patch=3 amount=0.412 ...), kept in rest.
 EVENT_RE = re.compile(r"CRABSIM_EVENT\s+(?P<name>[A-Za-z_]+)\s+t=(?P<t>{n})(?P<rest>.*)".format(n=_NUM))
 SCREEN_RE = re.compile(r"CRABSIM_SCREEN\s+t=(?P<t>{n})\s+view=(?P<vw>\d+)x(?P<vh>\d+)\s+"
@@ -210,7 +235,8 @@ READY_RE = re.compile(r"LogCrabSim:\s*CRABSIM_READY")
 PROBLEM_RE = re.compile(r"Fatal error|Ensure condition failed|Signal 11|SIGSEGV|Unhandled Exception")
 
 State = namedtuple("State", "t x y z yaw speed target dash grip depth water tide burrow dance anim skel swept "
-                            "food feeding dig dug molts molt soft over scale eaten", defaults=(None,) * 19)
+                            "food feeding dig dug molts molt soft over scale eaten cam pitch",
+                    defaults=(None,) * 19 + (0.0, 0.0))
 Event = namedtuple("Event", "name t rest", defaults=("",))
 # view is (width, height) of the game viewport, crab is a pixel (or (-1, -1)), burrows and patches map index to a
 # pixel, dig, molt, newround, gofood, goburrow and onestick are the pixels at the middle of the HUD's dig button, molt
@@ -235,13 +261,16 @@ def parse_state(line):
         return conv(m.group(key)) if m.group(key) is not None else None
 
     target = (float(m.group("tx")), float(m.group("ty"))) if m.group("tx") is not None else None
+    # cam and pitch default to 0.0 (not None) when absent, so scenarios can do arithmetic without a None check.
+    cam = float(m.group("cam")) if m.group("cam") is not None else 0.0
+    pitch = float(m.group("pitch")) if m.group("pitch") is not None else 0.0
     return State(float(m.group("t")), float(m.group("x")), float(m.group("y")), float(m.group("z")),
                  float(m.group("yaw")), float(m.group("speed")), target, m.group("dash") == "1",
                  opt("grip", float), opt("depth", float), opt("water", float), opt("tide", float),
                  opt("burrow", int), opt("dance", lambda v: v == "1"), opt("anim", str),
                  opt("skel", int), opt("swept", int), opt("food", float), opt("feeding", int),
                  opt("dig", float), opt("dug", int), opt("molts", int), opt("molt", float), opt("soft", float),
-                 opt("over", lambda v: v == "1"), opt("scale", float), opt("eaten", lambda v: v == "1"))
+                 opt("over", lambda v: v == "1"), opt("scale", float), opt("eaten", lambda v: v == "1"), cam, pitch)
 
 
 def parse_event(line):
@@ -301,6 +330,11 @@ def parse_gull(line):
 def ang_diff(a, b):
     """Smallest absolute difference between two angles in degrees, 0 to 180."""
     return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def yaw_delta(before, after):
+    """Signed change from angle `before` to `after`, wrapped to (-180, 180] (positive is a rightward/CW turn)."""
+    return (after - before + 180.0) % 360.0 - 180.0
 
 
 def yaw_off(yaw, *axes):
@@ -437,7 +471,7 @@ class Run:
         text = ("%s: t=%.2f loc=%.0f,%.0f yaw=%.1f speed=%.0f target=%s dash=%d"
                 % (label, s.t, s.x, s.y, s.yaw, s.speed, target, int(s.dash)))
         for name in ("grip", "depth", "water", "tide", "burrow", "dance", "anim", "swept", "food", "feeding", "dug",
-                     "molts", "molt", "soft", "scale", "eaten"):
+                     "molts", "molt", "soft", "scale", "eaten", "cam", "pitch"):
             value = getattr(s, name)
             if value is not None:
                 text += " %s=%s" % (name, int(value) if isinstance(value, bool) else value)
@@ -722,6 +756,43 @@ class Run:
             for s in after:
                 self.describe("  sample", s)
         return after
+
+    # ---- scenario orbit: steps ----
+    def orbit_sweep(self, dx_total, label, start=(0, 0), dy_total=0.0):
+        """Point at `start` (mirrors the dash step's aiming), press the right button, then move the pointer
+        dx_total px in x and dy_total px in y over ORBIT_STEPS small steps while it stays down, then release.
+        Warps the pointer (exact, no acceleration: see focus.warp_pointer_to_screen) rather than a relative
+        uinput move, because the game reads the pointer's screen position each frame, not raw deltas
+        (CrabOrbitMath.h). Returns the Mark taken just before the press, so callers can measure
+        orbit_start/orbit_end and any dash against it.
+        """
+        self.place_and_settle(*start)
+        centre = window_centre(self.window)
+        mark = self.mark()
+        if not centre:
+            self.check(False, "the game window can be measured for the orbit sweep")
+            return mark
+        self.mouse.button_down(BTN_RIGHT)
+        step_x = dx_total / float(ORBIT_STEPS)
+        step_y = dy_total / float(ORBIT_STEPS)
+        for i in range(1, ORBIT_STEPS + 1):
+            warp_pointer_to_screen(centre[0] + start[0] + step_x * i, centre[1] + start[1] + step_y * i)
+            time.sleep(ORBIT_STEP_SLEEP)
+        self.mouse.button_up(BTN_RIGHT)
+        self.note("%s: right held, pointer swept dx=%.0f dy=%.0f px over %d steps"
+                  % (label, dx_total, dy_total, ORBIT_STEPS))
+        return mark
+
+    def assert_no_dash(self, mark, window, label):
+        """Mirrors dash()'s own check, inverted: no state after `mark` within `window` s may have dash=1."""
+        limit = mark.t + window + STATE_INTERVAL
+        self.wait_clock(limit)
+        after = [s for s in self.tail.states[mark.states:] if s.t <= limit]
+        dashing = [s for s in after if s.dash]
+        self.check(not dashing, "%s: no dash (dash=1 in 0 of %d samples, need 0)" % (label, len(after)))
+        if dashing:
+            for s in dashing:
+                self.describe("  sample", s)
 
     def wait_idle(self, timeout=6.0):
         """Wait for the crab to have no target, so the next step starts from rest."""
@@ -1659,9 +1730,97 @@ class Run:
                            "the stick is ignored once one-stick mode is off: no cursor event from that tap")
         self.finish()
 
+    # ---- scenario orbit ----
+    def scenario_orbit(self):
+        """CrabSim.Gulls 0: holding the right button and dragging the pointer sideways orbits the camera; a
+        right click that does not move still dashes, on release (see GAME.md, "Camera", and CrabOrbitMath.h).
+        """
+        # a. ready, focus, let the crab settle: the camera starts at yaw 0
+        first = self.begin(want_mouse=True, settle=SETTLE)
+        self.describe("first", first)
+        self.wait_idle()
+        time.sleep(ORBIT_SETTLE)
+        settled = self.fresh(self.now_t())
+        self.describe("settled", settled)
+        cam0 = settled.cam if settled else 0.0
+        self.check(abs(cam0) <= ORBIT_CAM_START_TOL, "camera starts near yaw 0: cam=%.1f (need |cam| <= %.0f)"
+                   % (cam0, ORBIT_CAM_START_TOL))
+        self.shot("ready")
+
+        # b. hold right and sweep the pointer +300 px in x: an orbit right, no dash while it is held
+        print("-- orbit right (+300px)", flush=True)
+        mark = self.orbit_sweep(ORBIT_SWEEP_PX, "orbit right")
+        self.expect_event(mark, "orbit_start", ORBIT_EVENT_WINDOW, "past the start threshold: orbit_start event")
+        self.expect_event(mark, "orbit_end", ORBIT_EVENT_WINDOW, "releasing: orbit_end event")
+        self.assert_no_dash(mark, ORBIT_EVENT_WINDOW, "orbit right: held and moved, so it must not dash")
+        after = self.fresh(mark.t + ORBIT_EVENT_WINDOW)
+        cam1 = after.cam if after else cam0
+        delta = yaw_delta(cam0, cam1)
+        self.check(ORBIT_CAM_MIN <= delta <= ORBIT_CAM_MAX,
+                   "camera turned right by about %.0f deg: cam %.1f -> %.1f, delta %.1f (need %.0f..%.0f)"
+                   % (ORBIT_SWEEP_PX * 0.3, cam0, cam1, delta, ORBIT_CAM_MIN, ORBIT_CAM_MAX))
+        self.shot("orbit_right")
+
+        # c. aim at the ground the way the basic scenario's dash step does, right click without moving:
+        # a dash, and the camera does not turn
+        print("-- dash after orbit", flush=True)
+        self.wait_idle()
+        self.place_and_settle(-300, 0)
+        mark = self.mark()
+        cam_before_click = mark.state.cam if mark.state else cam1
+        self.dash("dash after orbiting")
+        after = self.fresh(mark.t + DASH_WINDOW + STATE_INTERVAL)
+        cam2 = after.cam if after else cam_before_click
+        self.check(abs(yaw_delta(cam_before_click, cam2)) <= ORBIT_CAM_STILL_TOL,
+                   "the camera did not turn on a plain right click: cam %.1f -> %.1f" % (cam_before_click, cam2))
+        self.shot("dash_after_orbit")
+
+        # d. hold right and sweep the pointer -300 px in x: the camera comes back to about where it started
+        print("-- orbit left (-300px)", flush=True)
+        mark = self.orbit_sweep(-ORBIT_SWEEP_PX, "orbit left")
+        self.expect_event(mark, "orbit_start", ORBIT_EVENT_WINDOW, "past the start threshold: orbit_start event")
+        self.expect_event(mark, "orbit_end", ORBIT_EVENT_WINDOW, "releasing: orbit_end event")
+        after = self.fresh(mark.t + ORBIT_EVENT_WINDOW)
+        cam3 = after.cam if after else cam2
+        self.check(abs(cam3) <= ORBIT_CAM_HOME_TOL, "camera is back near yaw 0: cam=%.1f (need |cam| <= %.0f)"
+                   % (cam3, ORBIT_CAM_HOME_TOL))
+        self.shot("orbit_back")
+
+        # e. a straight vertical drag changes pitch, not yaw: down lowers it, up brings it back
+        print("-- orbit pitch (drag down, then up)", flush=True)
+        self.wait_idle()
+        pitch0 = after.pitch if after else ORBIT_PITCH_START
+        self.check(abs(pitch0 - ORBIT_PITCH_START) <= ORBIT_PITCH_HOME_TOL,
+                   "pitch starts near %.0f: pitch=%.1f" % (ORBIT_PITCH_START, pitch0))
+        mark = self.orbit_sweep(0.0, "orbit down (pitch)", dy_total=ORBIT_PITCH_DRAG_PX)
+        self.expect_event(mark, "orbit_start", ORBIT_EVENT_WINDOW, "past the start threshold: orbit_start event")
+        self.expect_event(mark, "orbit_end", ORBIT_EVENT_WINDOW, "releasing: orbit_end event")
+        after_down = self.fresh(mark.t + ORBIT_EVENT_WINDOW)
+        pitch1 = after_down.pitch if after_down else pitch0
+        cam4 = after_down.cam if after_down else cam3
+        fall = pitch0 - pitch1
+        self.check(ORBIT_PITCH_FALL_MIN <= fall <= ORBIT_PITCH_FALL_MAX,
+                   "dragging straight down %.0f px lowers pitch: pitch %.1f -> %.1f, fell %.1f deg (need %.0f..%.0f)"
+                   % (ORBIT_PITCH_DRAG_PX, pitch0, pitch1, fall, ORBIT_PITCH_FALL_MIN, ORBIT_PITCH_FALL_MAX))
+        self.check(abs(yaw_delta(cam3, cam4)) <= ORBIT_CAM_STILL_TOL,
+                   "a straight vertical drag does not turn yaw: cam %.1f -> %.1f" % (cam3, cam4))
+        self.shot("orbit_pitch_down")
+
+        mark = self.orbit_sweep(0.0, "orbit up (pitch)", dy_total=-ORBIT_PITCH_DRAG_PX)
+        self.expect_event(mark, "orbit_start", ORBIT_EVENT_WINDOW, "past the start threshold: orbit_start event")
+        self.expect_event(mark, "orbit_end", ORBIT_EVENT_WINDOW, "releasing: orbit_end event")
+        after_up = self.fresh(mark.t + ORBIT_EVENT_WINDOW)
+        pitch2 = after_up.pitch if after_up else pitch1
+        self.check(abs(pitch2 - ORBIT_PITCH_START) <= ORBIT_PITCH_HOME_TOL,
+                   "dragging back up returns pitch to about %.0f: pitch=%.1f (need within %.0f)"
+                   % (ORBIT_PITCH_START, pitch2, ORBIT_PITCH_HOME_TOL))
+        self.shot("orbit_pitch_up")
+
+        self.finish()
+
 
 SCENARIOS = {"basic": Run.scenario_basic, "tide": Run.scenario_tide, "forage": Run.scenario_forage, "molt": Run.scenario_molt,
-             "goto": Run.scenario_goto, "gull": Run.scenario_gull, "onestick": Run.scenario_onestick}
+             "goto": Run.scenario_goto, "gull": Run.scenario_gull, "onestick": Run.scenario_onestick, "orbit": Run.scenario_orbit}
 
 
 def main():

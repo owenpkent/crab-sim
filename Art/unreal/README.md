@@ -125,7 +125,7 @@ glossier below `WetBand`, `WetDarkening`). Used with instanced static meshes.
 ## Maps
 
 * `/Game/Maps/Beach`: lighting only. A movable sun (6.5 lux with a fixed EV100 0 exposure, 26 degrees up, in front
-  of and to the left of the fixed camera, so shadows fall toward the camera), sky atmosphere, a
+  of and to the left of the camera's starting view, so shadows fall toward it), sky atmosphere, a
   real-time captured sky light with a warm lower hemisphere to stand in for sand bounce, light
   height fog, and an unbound post process volume: fixed exposure, a warm grade, bloom 0.3, no
   motion blur. It is `GameDefaultMap` and `EditorStartupMap`.

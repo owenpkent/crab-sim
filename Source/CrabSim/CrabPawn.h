@@ -74,6 +74,22 @@ public:
 	/** World Z of the crab's feet, for projecting the cursor onto the ground. */
 	float GetFeetZ() const;
 
+	// --- Camera -------------------------------------------------------------
+
+	/** The camera's yaw round the crab, degrees. 0 looks along +X, toward the sea. Kept from round to round. */
+	float GetCameraYaw() const { return CameraYaw; }
+	void SetCameraYaw(float Degrees);
+	void AddCameraYaw(float Degrees) { SetCameraYaw(CameraYaw + Degrees); }
+
+	/** The camera's pitch, degrees, negative looks down, kept inside CrabOrbit's clamp. Kept from round to round. */
+	float GetCameraPitch() const { return CameraPitch; }
+	void SetCameraPitch(float Degrees);
+	void AddCameraPitch(float Degrees) { SetCameraPitch(CameraPitch + Degrees); }
+
+	/** The camera's pitch at the start, degrees, negative looks down. CrabSim.CameraPitch sets it when changed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|Camera")
+	float CameraPitch = -38.f;
+
 	// --- Dance --------------------------------------------------------------
 
 	/** Face the camera and wave. False if the crab cannot dance right now: in a burrow, in the surge, or dashing. */
@@ -235,7 +251,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|Dash")
 	float DashCooldown = 1.2f;
 
-	/** The crab's facing while it dances, yaw degrees. 180 faces the camera. */
+	/** The crab's facing while it dances, yaw degrees from the camera's yaw. 180 faces the camera. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|Dance")
 	float DanceFacingYaw = 180.f;
 
@@ -273,6 +289,13 @@ private:
 	void LogEvent(const TCHAR* Name, const FString& Detail = FString()) const;
 	void LogState() const;
 	static const TCHAR* AnimName(ECrabAnim State);
+
+	/** Points the boom at CameraYaw and the pitch, and turns the peek to face the camera. */
+	void ApplyCameraRotation();
+
+	float CameraYaw = 0.f;
+	/** The CrabSim.CameraPitch value last seen, so a change to it sets the pitch once and an orbit can move it after. */
+	float LastPitchOverride = 0.f;
 
 	UPROPERTY(VisibleAnywhere, Category = "Crab")
 	TObjectPtr<USpringArmComponent> CameraBoom;
