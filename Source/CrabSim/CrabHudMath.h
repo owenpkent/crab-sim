@@ -19,7 +19,8 @@ namespace CrabHud
 	constexpr float NewRoundButtonWidth = 300.f;
 	constexpr float NewRoundButtonHeight = 96.f;
 	constexpr float ResultsPanelWidth = 560.f;
-	constexpr float ResultsPanelHeight = 410.f;
+	/** Tall enough for the stat rows (Time, Best time, Molts, Burrows dug, Food eaten, Pellets rolled) above the button. */
+	constexpr float ResultsPanelHeight = 420.f;
 	/** Side of one molt pip and the gap between pips, at scale 1. */
 	constexpr float MoltPipSize = 26.f;
 	constexpr float MoltPipGap = 10.f;
@@ -348,13 +349,29 @@ namespace CrabHud
 	/**
 	 * All the controls for the first minute of a round, then one short line for what the crab is doing, and what to do
 	 * about a gull that is down and coming (bGullDown). None while the results panel is up. In one-stick mode
-	 * (bOneStick) a click is a tap, so the lines speak of the stick instead.
+	 * (bOneStick) a click is a tap, so the lines speak of the stick instead. Underground (bUnderground) the whole
+	 * control scheme is different (no gull, no dash, no orbit), so it gets its own short lines straight away,
+	 * ahead of the first minute's intro: what a click does, and, once the crab is carrying a pellet, how to bring
+	 * it up.
 	 */
-	inline FHintText HintText(float RoundSeconds, bool bInBurrow, bool bMolting, bool bRoundOver = false, bool bGullDown = false, bool bOneStick = false)
+	inline FHintText HintText(float RoundSeconds, bool bInBurrow, bool bMolting, bool bRoundOver = false, bool bGullDown = false,
+		bool bOneStick = false, bool bUnderground = false, bool bCarryingPellet = false)
 	{
 		if (bRoundOver)
 		{
 			return {FString(), FString()};
+		}
+		if (bUnderground && !bOneStick)
+		{
+			if (bMolting)
+			{
+				return {TEXT("Molting. Click elsewhere to cancel."), FString()};
+			}
+			if (bCarryingPellet)
+			{
+				return {TEXT("Carry it up: UP, or click the shaft top."), FString()};
+			}
+			return {TEXT("Click: walk. Click crab: dance."), FString()};
 		}
 		if (bOneStick)
 		{
@@ -402,6 +419,21 @@ namespace CrabHud
 	inline bool EchoesReason(const FString& Message, const FString& Reason)
 	{
 		return !Reason.IsEmpty() && Message.EndsWith(Reason, ESearchCase::IgnoreCase);
+	}
+
+	// --- Colony -----------------------------------------------------------------------------------------
+
+	/** The colony panel: small, top centre, shown only while the crab is underground. */
+	constexpr float ColonyPanelWidth = 460.f;
+	constexpr float ColonyPanelHeight = 40.f;
+	constexpr float ColonyPanelTop = 10.f;
+
+	inline FBox2D ColonyPanelRect(float ViewWidth, float ViewHeight)
+	{
+		const float Scale = ScaleForHeight(ViewHeight);
+		const FVector2D Size(ColonyPanelWidth * Scale, ColonyPanelHeight * Scale);
+		const FVector2D Min((ViewWidth - Size.X) * 0.5f, ColonyPanelTop * Scale);
+		return FBox2D(Min, Min + Size);
 	}
 
 	// --- One-stick mode -------------------------------------------------------------------------------

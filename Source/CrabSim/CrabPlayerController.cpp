@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CrabPlayerController.h"
 #include "CrabBeach.h"
+#include "CrabColony.h"
+#include "CrabColonyView.h"
 #include "CrabGull.h"
 #include "CrabHudMath.h"
 #include "CrabPawn.h"
@@ -148,6 +150,30 @@ bool ACrabPlayerController::GetCursorGroundPoint(FVector& OutPoint) const
 	return true;
 }
 
+bool ACrabPlayerController::GetCursorColonyUV(const ACrabPawn& Crab, FVector2D& OutUV) const
+{
+	const ACrabColony* Colony = Crab.GetColony();
+	if (!Colony)
+	{
+		return false;
+	}
+	FVector Origin;
+	FVector Direction;
+	if (!DeprojectMousePositionToWorld(Origin, Direction))
+	{
+		return false;
+	}
+	// The cutaway's own plane: through the mouth (0, 0), facing the camera (-ViewDirection is the plane's normal).
+	const FVector PlaneNormal = -UCrabColonyViewComponent::ViewDirection();
+	if (FMath::Abs(FVector::DotProduct(Direction, PlaneNormal)) < KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+	const FVector Hit = FMath::RayPlaneIntersection(Origin, Direction, FPlane(Colony->PlanToWorld(FVector2D::ZeroVector), PlaneNormal));
+	OutUV = Colony->WorldToPlan(Hit);
+	return true;
+}
+
 bool ACrabPlayerController::ProjectToPixel(const FVector& World, FVector2D& OutPixel) const
 {
 	if (ProjectToView)
@@ -282,24 +308,64 @@ void ACrabPlayerController::HandleLeftPress(ACrabPawn& Crab, const FVector2D& Sc
 	}
 	if (CrabHud::HitsDigButton(ViewSize.X, ViewSize.Y, ScreenPos))
 	{
-		Crab.StartDig();
+		// Dug into the colony burrow on the surface: DOWN. Underground: DIG becomes "help dig". Otherwise unchanged.
+		if (Crab.IsUnderground())
+		{
+			Crab.GoToDigFace();
+		}
+		else if (Crab.IsInBurrow() && Crab.GetCurrentBurrow() == 0)
+		{
+			Crab.GoDown();
+		}
+		else
+		{
+			Crab.StartDig();
+		}
 		bSwallowHold = true;
 		return;
 	}
 	if (CrabHud::HitsFoodButton(ViewSize.X, ViewSize.Y, ScreenPos))
 	{
-		Crab.GoToFood();
+		if (Crab.IsUnderground())
+		{
+			Crab.GoToPantryAndEat();
+		}
+		else
+		{
+			Crab.GoToFood();
+		}
 		bSwallowHold = true;
 		return;
 	}
 	if (CrabHud::HitsBurrowButton(ViewSize.X, ViewSize.Y, ScreenPos))
 	{
-		Crab.GoToBurrow();
+		if (Crab.IsUnderground())
+		{
+			Crab.GoUp();
+		}
+		else
+		{
+			Crab.GoToBurrow();
+		}
 		bSwallowHold = true;
 		return;
 	}
 	// A one-stick left click is a tap, fed to UpdateOneStick every frame: it never also walks the crab.
-	if (GroundPoint && CVarOneStick.GetValueOnGameThread() == 0)
+	if (CVarOneStick.GetValueOnGameThread() != 0)
+	{
+		return;
+	}
+	if (Crab.IsUnderground())
+	{
+		bSwallowHold = false;
+		FVector2D UV;
+		if (GetCursorColonyUV(Crab, UV))
+		{
+			HandleUndergroundClick(Crab, UV);
+		}
+		return;
+	}
+	if (GroundPoint)
 	{
 		bSwallowHold = false;
 		const FCrabPointer Pointer{ScreenPos, ViewSize};
@@ -328,6 +394,76 @@ void ACrabPlayerController::HandleHold(ACrabPawn& Crab, const FVector& Point, co
 	int32 Patch = INDEX_NONE;
 	ResolveTarget(Crab, Point, Pointer, Target, Burrow, Patch);
 	Crab.SetMoveTarget(Target, Burrow, Patch);
+}
+
+void ACrabPlayerController::HandleUndergroundClick(ACrabPawn& Crab, const FVector2D& UV)
+{
+	if (Crab.IsRoundOver())
+	{
+		return;
+	}
+	ACrabColony* Colony = Crab.GetColony();
+	if (!Colony)
+	{
+		return;
+	}
+
+	// The crab itself: carrying, a click sets the pellet down instead of dancing.
+	if (FVector2D::Distance(UV, Crab.GetUndergroundUV()) <= DanceClickRadius)
+	{
+		if (Crab.IsCarryingPellet())
+		{
+			Crab.DropCarriedPelletAtFeet();
+		}
+		else
+		{
+			Crab.ToggleDance();
+		}
+		bSwallowHold = true;
+		return;
+	}
+	// A loose pellet close by, while the crab's hands are free.
+	if (!Crab.IsCarryingPellet())
+	{
+		const int32 Pellet = Colony->FindLoosePelletNear(UV, 60.f);
+		if (Pellet != INDEX_NONE)
+		{
+			Crab.WalkToLoosePellet(Pellet, UV);
+			return;
+		}
+	}
+	// The top of the entrance shaft, at (0, 0).
+	if (FVector2D::Distance(UV, FVector2D::ZeroVector) <= 120.f)
+	{
+		Crab.GoUp();
+		return;
+	}
+	// The face being dug.
+	if (Colony->GetActiveDigEdge() != INDEX_NONE && FVector2D::Distance(UV, Colony->GetDigFacePos()) <= 120.f)
+	{
+		Crab.GoToDigFace();
+		return;
+	}
+	// Plain floor: walk there, whether or not the crab is carrying.
+	Crab.SetUndergroundTarget(UV);
+}
+
+void ACrabPlayerController::HandleUndergroundHold(ACrabPawn& Crab, const FVector2D& UV)
+{
+	if (Crab.IsRoundOver() || bSwallowHold)
+	{
+		return;
+	}
+	if (Crab.IsDancing())
+	{
+		// Holding on the crab keeps the dance going. Dragging away ends it and follows, as on the surface.
+		if (FVector2D::Distance(UV, Crab.GetUndergroundUV()) <= DanceClickRadius)
+		{
+			return;
+		}
+		Crab.StopDance();
+	}
+	Crab.SetUndergroundTarget(UV);
 }
 
 void ACrabPlayerController::LogScreenPositions(float DeltaTime)
@@ -407,8 +543,11 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 		NotifyLeftButtonReleased();
 	}
 
+	const bool bUnderground = Crab->IsUnderground();
 	FVector Point;
-	const bool bHavePoint = GetCursorGroundPoint(Point);
+	const bool bHavePoint = bUnderground ? false : GetCursorGroundPoint(Point);
+	FVector2D ColonyUV;
+	const bool bHaveColonyPoint = bUnderground && GetCursorColonyUV(*Crab, ColonyUV);
 
 	float MouseX = 0.f;
 	float MouseY = 0.f;
@@ -425,6 +564,14 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 	if (WasInputKeyJustPressed(EKeys::LeftMouseButton) && bHaveMouse)
 	{
 		HandleLeftPress(*Crab, Screen, View, bHavePoint ? &Point : nullptr);
+	}
+	else if (bUnderground && bHaveColonyPoint && !bOneStick)
+	{
+		// The cursor over a HUD button is over the button, not over the cutaway behind it.
+		if (IsInputKeyDown(EKeys::LeftMouseButton) && !(bHaveMouse && CrabHud::HitsAnyButton(View.X, View.Y, Screen)))
+		{
+			HandleUndergroundHold(*Crab, ColonyUV);
+		}
 	}
 	else if (bHavePoint && !bOneStick)
 	{
@@ -455,6 +602,13 @@ void ACrabPlayerController::PlayerTick(float DeltaTime)
 
 void ACrabPlayerController::UpdateRightButton(ACrabPawn& Crab, bool bHaveMouse, const FVector2D& Screen, bool bHavePoint, const FVector& Point)
 {
+	if (Crab.IsUnderground())
+	{
+		// The cutaway does not orbit and has no dash: swallow the gesture, so a drag begun on the surface (or
+		// down here) never leaks an orbit or a dash out once it lets go.
+		OrbitDrag.Update(false, Screen, CrabOrbit::FTuning());
+		return;
+	}
 	CrabOrbit::FTuning Tuning;
 	Tuning.StartPixels = CVarOrbitStartPixels.GetValueOnGameThread();
 	Tuning.DegreesPerPixel = CVarOrbitDegreesPerPixel.GetValueOnGameThread();
@@ -515,13 +669,34 @@ void ACrabPlayerController::DispatchOneStickSelect(ACrabPawn& Crab, CrabStick::E
 		// FMenuState has already entered STEER: nothing more to do here.
 		break;
 	case CrabStick::EMenuItem::Food:
-		Crab.GoToFood();
+		if (Crab.IsUnderground())
+		{
+			Crab.GoToPantryAndEat();
+		}
+		else
+		{
+			Crab.GoToFood();
+		}
 		break;
 	case CrabStick::EMenuItem::Burrow:
-		Crab.GoToBurrow();
+		if (Crab.IsUnderground())
+		{
+			Crab.GoUp();
+		}
+		else
+		{
+			Crab.GoToBurrow();
+		}
 		break;
 	case CrabStick::EMenuItem::Dig:
-		Crab.StartDig();
+		if (Crab.IsUnderground())
+		{
+			Crab.GoToDigFace();
+		}
+		else
+		{
+			Crab.StartDig();
+		}
 		break;
 	case CrabStick::EMenuItem::Molt:
 		Crab.StartMolt();
@@ -614,26 +789,49 @@ void ACrabPlayerController::UpdateOneStick(ACrabPawn& Crab, float DeltaTime)
 		if (MenuState.GetMode() == CrabStick::EMode::Menu)
 		{
 			// Leaving STEER stops the crab: there is no cursor-restore equivalent for a walk under way.
-			Crab.ClearMoveTarget();
+			if (Crab.IsUnderground())
+			{
+				Crab.ClearUndergroundTarget();
+			}
+			else
+			{
+				Crab.ClearMoveTarget();
+			}
 		}
 	}
 
 	if (MenuState.GetMode() == CrabStick::EMode::Steer)
 	{
-		// Screen-relative: stick up drives the camera's forward and stick right its right, whatever way the
-		// camera has been orbited (at yaw 0, world +X and +Y), so up on the stick is up on screen.
 		const float Magnitude = Stick.Size();
-		FVector2D Direction = CrabOrbit::ScreenToWorld(Stick, Crab.GetCameraYaw());
-		if (Magnitude >= Tuning.Inner && Direction.Normalize())
+		if (Crab.IsUnderground())
 		{
-			const FVector Target = Crab.GetActorLocation() + FVector(Direction.X, Direction.Y, 0.f) * OneStickSteerAheadDistance;
-			Crab.SetMoveTarget(Target);
-			// SetMoveTarget just reset this to 1: put back how far the stick is actually pushed.
-			Crab.SetWalkSpeedMultiplier(CrabStick::SteerSpeedMultiplier(Magnitude, Tuning));
+			// Plan-space directly: stick up is up the cutaway (+V), stick right is +U.
+			if (Magnitude >= Tuning.Inner)
+			{
+				const FVector2D Target = Crab.GetUndergroundUV() + FVector2D(Stick.X, Stick.Y) * OneStickSteerAheadDistance;
+				Crab.SetUndergroundTarget(Target);
+			}
+			else
+			{
+				Crab.ClearUndergroundTarget();
+			}
 		}
 		else
 		{
-			Crab.ClearMoveTarget();
+			// Screen-relative: stick up drives the camera's forward and stick right its right, whatever way the
+			// camera has been orbited (at yaw 0, world +X and +Y), so up on the stick is up on screen.
+			FVector2D Direction = CrabOrbit::ScreenToWorld(Stick, Crab.GetCameraYaw());
+			if (Magnitude >= Tuning.Inner && Direction.Normalize())
+			{
+				const FVector Target = Crab.GetActorLocation() + FVector(Direction.X, Direction.Y, 0.f) * OneStickSteerAheadDistance;
+				Crab.SetMoveTarget(Target);
+				// SetMoveTarget just reset this to 1: put back how far the stick is actually pushed.
+				Crab.SetWalkSpeedMultiplier(CrabStick::SteerSpeedMultiplier(Magnitude, Tuning));
+			}
+			else
+			{
+				Crab.ClearMoveTarget();
+			}
 		}
 	}
 }

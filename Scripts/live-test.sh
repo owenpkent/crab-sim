@@ -76,10 +76,18 @@
 #          camera back near yaw 0; the pitch starts near -38, a right drag 100 px straight down lowers it by about
 #          30 deg (CrabSim.OrbitPitchDegreesPerPixel 0.3) and leaves the yaw alone, and 100 px back up returns it.
 #          About half a minute.
+#   colony launched with CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0,CrabSim.StartFood 0.3 (tide
+#          frozen at low water). In order: click BURROW (goto_burrow says burrow=0: the colony's own entrance
+#          under the dune foot is the safest burrow there is), burrow_enter, dug in at burrow 0; click the DIG
+#          button (now DOWN): colony_enter, under=1 in the state; click the FOOD button (now EAT): food rises
+#          over a few seconds from the colony's store; click DIG again (now "help dig"): colony_eat logs what
+#          eating gained, then the crab walks to the active face and digs until it holds a pellet (carry=1);
+#          click BURROW (now UP): colony_pellet who=player as it drops the pellet on the mound, colony_exit,
+#          under=0 back at burrow 0 on the beach. About a minute.
 #
 # Environment overrides:
-#   LIVE_SCENARIOS="basic tide forage molt goto gull onestick orbit"  which scenarios to run, in this order
-#                          (space or comma separated). LIVE_SCENARIOS=tide runs only one.
+#   LIVE_SCENARIOS="basic tide forage molt goto gull onestick orbit colony"  which scenarios to run, in this
+#                          order (space or comma separated). LIVE_SCENARIOS=tide runs only one.
 #   LIVE_TIDE_SPEED=<n>    CrabSim.TideSpeed for the tide scenario (default 3). Below 10
 #                          the session multiplies its tide time limits by 10/n.
 #   LIVE_RESX, LIVE_RESY   window size (default 1280x720)
@@ -109,7 +117,7 @@ export DISPLAY="${DISPLAY:-:0}"
 
 RESX="${LIVE_RESX:-1280}"
 RESY="${LIVE_RESY:-720}"
-SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto gull onestick orbit}"
+SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto gull onestick orbit colony}"
 SCENARIOS="${SCENARIOS//,/ }"
 TIDE_SPEED="${LIVE_TIDE_SPEED:-3}"
 [[ "$TIDE_SPEED" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "LIVE_TIDE_SPEED must be a number: $TIDE_SPEED" >&2; exit 2; }
@@ -127,6 +135,7 @@ exec_cmds_for() {
 		gull)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.GullForce 1" ;;
 		onestick) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0,CrabSim.OneStick 1" ;;
 		orbit) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0" ;;
+		colony) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0,CrabSim.StartFood 0.3" ;;
 		*)     return 1 ;;
 	esac
 }
@@ -159,7 +168,7 @@ wait_gone() {
 }
 
 for scn in $SCENARIOS; do
-	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto gull onestick orbit)." >&2; exit 2; }
+	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto gull onestick orbit colony)." >&2; exit 2; }
 done
 [ -n "${SCENARIOS// /}" ] || { echo "LIVE_SCENARIOS is empty." >&2; exit 2; }
 

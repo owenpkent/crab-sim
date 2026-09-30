@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CrabSimGameMode.h"
 #include "CrabBeach.h"
+#include "CrabColony.h"
 #include "CrabGull.h"
 #include "CrabHUD.h"
 #include "CrabPawn.h"
@@ -45,6 +46,10 @@ void ACrabSimGameMode::BeginPlay()
 	// One gull to a world. It stays out of sight until the rules send it.
 	TActorIterator<ACrabGull> ExistingGull(World);
 	Gull = ExistingGull ? *ExistingGull : World->SpawnActor<ACrabGull>(FVector::ZeroVector, FRotator::ZeroRotator);
+
+	// The colony under burrow 0. It puts itself there in its own BeginPlay, once the beach exists to ask.
+	TActorIterator<ACrabColony> ExistingColony(World);
+	Colony = ExistingColony ? *ExistingColony : World->SpawnActor<ACrabColony>(FVector::ZeroVector, FRotator::ZeroRotator);
 
 	PlaceCrabsOnTheGround();
 }

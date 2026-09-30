@@ -357,7 +357,7 @@ void ACrabGull::Tick(float DeltaSeconds)
 void ACrabGull::UpdateVisual(float DeltaSeconds, const ACrabBeach* Beach)
 {
 	const bool bActive = IsActive();
-	SetActorHiddenInGame(!bActive);
+	SetActorHiddenInGame(bSuppressed || !bActive);
 	if (!bActive)
 	{
 		return;

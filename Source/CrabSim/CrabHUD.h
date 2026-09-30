@@ -28,10 +28,14 @@ private:
 	void DrawFoodBar(const ACrabPawn& Crab, float Scale);
 	/** The buttons return the reason line they drew (empty when they are ready), so the message line can leave out a repeat. */
 	FString DrawDigButton(const ACrabPawn& Crab, float Scale);
+	/** DIG's meaning underground: help dig the active face. Disabled "all dug" or, while carrying a pellet, "carry it up". */
+	FString DrawColonyDigButton(const ACrabPawn& Crab, float Scale);
 	FString DrawMoltButton(const ACrabPawn& Crab, float Scale);
 	FString DrawFoodButton(const ACrabPawn& Crab, float Scale);
 	FString DrawBurrowButton(const ACrabPawn& Crab, float Scale);
 	void DrawGotoButton(const FBox2D& Rect, const TCHAR* Label, const TCHAR* Hint, const FLinearColor& ReadyColour, const FString& Reason, float Scale);
+	/** Top centre, small, only underground: population, food in store over capacity, and the pellet mound. */
+	void DrawColonyPanel(const class ACrabPawn& Crab, float Scale);
 	void DrawReasonLine(const FBox2D& Rect, const FString& Reason, float Scale);
 	void DrawMoltPips(const ACrabPawn& Crab, float Scale);
 	void DrawResults(const ACrabPawn& Crab, float Scale);

@@ -54,6 +54,9 @@ public:
 	/** The cursor projected onto the flat ground at the crab's feet. False when there is no cursor or it points at the sky. */
 	bool GetCursorGroundPoint(FVector& OutPoint) const;
 
+	/** The cursor projected onto the colony's cutaway plane, as a plan point (U, V). False with no colony or no cursor. */
+	bool GetCursorColonyUV(const ACrabPawn& Crab, FVector2D& OutUV) const;
+
 	/**
 	 * What a fresh left click on the ground point does. Public so tests can drive
 	 * it without a window. With the pointer's pixel, burrows and patches are also picked by their
@@ -63,6 +66,16 @@ public:
 
 	/** What holding the left button with the cursor at the point does, each frame. */
 	void HandleHold(ACrabPawn& Crab, const FVector& Point, const FCrabPointer* Pointer = nullptr);
+
+	/**
+	 * A fresh left click in the cutaway at this plan point (U, V), not on a HUD button. Public so tests can
+	 * drive it without a window, the same way HandleClick is. Priority: the crab itself (dance, or set down a
+	 * carried pellet), a loose pellet close by while the crab's hands are free, the top of the entrance shaft,
+	 * the dig face, otherwise plain ground.
+	 */
+	void HandleUndergroundClick(ACrabPawn& Crab, const FVector2D& UV);
+	/** Holding the left button underground: follows the cursor, the same as HandleHold, except a click on the crab keeps a dance going. */
+	void HandleUndergroundHold(ACrabPawn& Crab, const FVector2D& UV);
 
 	/**
 	 * A fresh left press at a screen pixel. On the FOOD, BURROW, dig or molt button it does that and swallows
