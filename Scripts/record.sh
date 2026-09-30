@@ -9,6 +9,7 @@
 #   RECORD_TOUR=molt Scripts/record.sh  the molt clip instead, default videos/crab-sim-molt.mp4
 #   RECORD_TOUR=playtest SPEEDUP=4 CRF=30 Scripts/record.sh   a whole round played by the bot, videos/crab-sim-playtest.mp4
 #   RECORD_TOUR=onestick Scripts/record.sh   one-stick mode, videos/crab-sim-onestick.mp4
+#   RECORD_TOUR=orbit Scripts/record.sh   the camera orbit, videos/crab-sim-orbit.mp4
 #   LIMIT=150 CRF=28 Scripts/record.sh videos/small.mp4
 #   SPEEDUP=2 Scripts/record.sh videos/fast.mp4       the tour at 2x, after the capture
 #   RECORD_TIDE_SPEED=1.5 Scripts/record.sh           a faster tide (see below)
@@ -36,6 +37,17 @@
 # deflection (visibly slower: CrabStick::SteerSpeedMultiplier); a triple tap back to the menu, the crab stopping; a
 # mouse click on the ONE STICK button turning it off. It runs with the tide frozen (CrabSim.TideSpeed 0, unless
 # RECORD_TIDE_SPEED says otherwise) so nothing about the water can interrupt it.
+# RECORD_TOUR=orbit records Scripts/live/tour_orbit.py instead (about 60 s, LIMIT defaults to 90 s): the
+# free camera orbit (a right drag turns yaw sideways and pitch up/down, CrabSim.OrbitDegreesPerPixel and
+# OrbitPitchDegreesPerPixel; the pointer is locked inside the view while held, so a turn
+# bigger than one drag's room is a release and a fresh press from the other side). In order: the default
+# view; a slow drag right across most of the view (a bit under a full turn round the crab); a drag down to
+# look almost straight down on the crab; a drag up, low across the sand; a slow wide circle with the
+# pointer while held, swinging yaw and pitch together round and over the crab; a click on the crab starts
+# the dance and a smaller circle orbits round it while it dances (the crab keeps turning to face the
+# camera); a second click stops the dance; a plain right click (no drag) still dashes, on release, not on
+# press; a final drag brings the camera back near the default view. It runs with the tide frozen
+# (CrabSim.TideSpeed 0, unless RECORD_TIDE_SPEED says otherwise) and CrabSim.Gulls 0.
 # Next to OUT.mp4 goes OUT.events.txt: what the tour did and what the game
 # logged, each with its time in the video (video=SECONDS, good to about half a
 # second, and divided by SPEEDUP).
@@ -46,7 +58,7 @@
 # reaches the flats where they happen: at the default speed 0.75 that is about 50 s into the
 # clip, and faster tides leave less time. Full HUD (tide gauge, grip bar, hints) stays on.
 # The tour and molt clips run with CrabSim.Gulls 0 so no gull interrupts them; the playtest runs with gulls on;
-# the onestick clip also runs with CrabSim.Gulls 0 (and the tide frozen, above).
+# the onestick and orbit clips also run with CrabSim.Gulls 0 (and the tide frozen, above).
 #
 # Needs: an X11 session, write access to /dev/uinput, xwininfo, xprop, and ffmpeg
 # with x11grab and libx264. Opens a game window and drives the real pointer, so
@@ -54,7 +66,7 @@
 # Do not let another window cover the game: the capture is of the screen.
 #
 # Environment overrides:
-#   RECORD_TOUR=tour|molt|playtest|onestick  which tour to play (default tour)
+#   RECORD_TOUR=tour|molt|playtest|onestick|orbit  which tour to play (default tour)
 #   RECORD_TIDE_SPEED=<n>  CrabSim.TideSpeed (default 0.75: a whole tide takes 240 s; 0.3 for the molt tour)
 #   LIMIT=<s>              stop recording after this many seconds (default 240, 1320 for the playtest)
 #   FPS=30  CRF=23         capture frame rate and x264 quality (lower is better)
@@ -95,11 +107,13 @@ case "$TOUR" in
 	molt) TOUR_SCRIPT=tour_molt.py; TOUR_TIDE=0.3; TOUR_EXEC=",CrabSim.FoodFloor 0.9,CrabSim.Gulls 0" ;;
 	playtest) TOUR_SCRIPT=playtest.py; TOUR_TIDE=1; TOUR_EXEC="" ;;
 	onestick) TOUR_SCRIPT=tour_onestick.py; TOUR_TIDE=0; TOUR_EXEC=",CrabSim.OneStick 1,CrabSim.Gulls 0" ;;
-	*) echo "RECORD_TOUR must be tour, molt, playtest or onestick: $TOUR" >&2; exit 2 ;;
+	orbit) TOUR_SCRIPT=tour_orbit.py; TOUR_TIDE=0; TOUR_EXEC=",CrabSim.Gulls 0" ;;
+	*) echo "RECORD_TOUR must be tour, molt, playtest, onestick or orbit: $TOUR" >&2; exit 2 ;;
 esac
 DEFAULT_LIMIT=240
 if [ "$TOUR" = "playtest" ]; then DEFAULT_LIMIT=1320; fi
 if [ "$TOUR" = "onestick" ]; then DEFAULT_LIMIT=90; fi
+if [ "$TOUR" = "orbit" ]; then DEFAULT_LIMIT=90; fi
 OUT="${1:-$ROOT/videos/crab-sim-$TOUR.mp4}"
 RESX="${RECORD_RESX:-1280}"
 RESY="${RECORD_RESY:-720}"

@@ -65,9 +65,20 @@
 #          doing what the results panel's own button does) is not exercised here: forcing a round to end
 #          without the tide or a gull is not cheap to script live, so it is unit tested instead
 #          (CrabSim.Stick.RoundOverShowsOnlyNewRoundAndSnapsTheCursorToIt in CrabStickMathTests.cpp).
+#   orbit  launched with CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0 (tide frozen at low water). Holds
+#          the right mouse button and drags the pointer sideways to orbit the camera (CrabSim.OrbitStartPixels 10,
+#          CrabSim.OrbitDegreesPerPixel 0.3), and checks that a right click which does not move still dashes, now
+#          on release rather than on press. In order: the crab settles with the camera at yaw 0; holding right and
+#          moving the pointer +300 px in x fires orbit_start, turns the camera about 90 deg right with no dash
+#          while it is held, then fires orbit_end on release; aiming at the ground the way the basic scenario's
+#          dash step does and right-clicking without moving fires a dash and leaves the camera where it was;
+#          holding right and moving the pointer -300 px in x fires orbit_start/orbit_end again and brings the
+#          camera back near yaw 0; the pitch starts near -38, a right drag 100 px straight down lowers it by about
+#          30 deg (CrabSim.OrbitPitchDegreesPerPixel 0.3) and leaves the yaw alone, and 100 px back up returns it.
+#          About half a minute.
 #
 # Environment overrides:
-#   LIVE_SCENARIOS="basic tide forage molt goto gull onestick"  which scenarios to run, in this order
+#   LIVE_SCENARIOS="basic tide forage molt goto gull onestick orbit"  which scenarios to run, in this order
 #                          (space or comma separated). LIVE_SCENARIOS=tide runs only one.
 #   LIVE_TIDE_SPEED=<n>    CrabSim.TideSpeed for the tide scenario (default 3). Below 10
 #                          the session multiplies its tide time limits by 10/n.
@@ -98,7 +109,7 @@ export DISPLAY="${DISPLAY:-:0}"
 
 RESX="${LIVE_RESX:-1280}"
 RESY="${LIVE_RESY:-720}"
-SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto gull onestick}"
+SCENARIOS="${LIVE_SCENARIOS:-basic tide forage molt goto gull onestick orbit}"
 SCENARIOS="${SCENARIOS//,/ }"
 TIDE_SPEED="${LIVE_TIDE_SPEED:-3}"
 [[ "$TIDE_SPEED" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "LIVE_TIDE_SPEED must be a number: $TIDE_SPEED" >&2; exit 2; }
@@ -115,6 +126,7 @@ exec_cmds_for() {
 		goto)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0" ;;
 		gull)  echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.GullForce 1" ;;
 		onestick) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0,CrabSim.OneStick 1" ;;
+		orbit) echo "CrabSim.StateLog 1,CrabSim.TideSpeed 0,CrabSim.Gulls 0" ;;
 		*)     return 1 ;;
 	esac
 }
@@ -147,7 +159,7 @@ wait_gone() {
 }
 
 for scn in $SCENARIOS; do
-	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto gull onestick)." >&2; exit 2; }
+	exec_cmds_for "$scn" >/dev/null || { echo "Unknown scenario '$scn' (known: basic tide forage molt goto gull onestick orbit)." >&2; exit 2; }
 done
 [ -n "${SCENARIOS// /}" ] || { echo "LIVE_SCENARIOS is empty." >&2; exit 2; }
 
