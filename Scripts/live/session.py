@@ -28,7 +28,10 @@ Usage: session.py <game log> <output dir> [game pid] [scenario]
   low water) or "onestick" (CrabSim.OneStick 1: a virtual gamepad's left stick, from gamepad.py, drives
   MENU and STEER; the mouse still does clicks and taps; the tide is frozen at low water) or "orbit"
   (CrabSim.Gulls 0, tide frozen at low water: holding the right button and dragging the pointer sideways
-  orbits the camera, and a right click that does not move still dashes, now on release instead of on press).
+  orbits the camera, and a right click that does not move still dashes, now on release instead of on press) or
+  "colony" (CrabSim.Gulls 0, tide frozen, CrabSim.StartFood 0.3: BURROW reaches burrow 0, the colony's own
+  entrance under the dune foot; DOWN takes the crab into the cutaway; EAT and DIG use the colony's store and
+  its dig face; UP rolls a pellet onto the mound and climbs back out).
 
 Time limits are in game seconds (the t= field), which run at real time. Each
 wait also has a wall-clock guard so a stalled game cannot hang the run.
@@ -185,6 +188,15 @@ ORBIT_PITCH_FALL_MIN = 20.0   # deg pitch must fall for a 100 px downward drag (
 ORBIT_PITCH_FALL_MAX = 40.0
 ORBIT_PITCH_HOME_TOL = 10.0   # deg pitch may sit off its start once the drag is undone
 
+# colony (TideSpeed 0, Gulls 0, CrabSim.StartFood 0.3): BURROW reaches burrow 0 (the colony's own entrance, the
+# safest), DOWN takes the crab into the cutaway, EAT and DIG use the colony's store and its dig face, UP rolls a
+# pellet onto the mound and climbs back out.
+COLONY_BURROW_INDEX = 0            # the colony's entrance is always burrow 0 (ACrabColony::GetEntranceBurrow)
+COLONY_DOWN_WINDOW = 3.0           # s from the click on DOWN to colony_enter and under=1
+COLONY_EAT_SECONDS = 3.0           # s spent on EAT before checking food rose
+COLONY_DIG_WINDOW = 12.0           # s from the click on DIG (walk to the face, then dig a PelletUu's worth) to carry=1
+COLONY_UP_WINDOW = 20.0            # s from the click on UP (walk to the shaft top) to colony_pellet/colony_exit/under=0
+
 # tide (TideSpeed 10: a whole tide is 18 s). The limits below are for that speed; LIVE_TIDE_SPEED
 # below 10 stretches the tide-clock ones (rise, swept, fall) by 10/speed.
 try:
@@ -215,13 +227,17 @@ STATE_RE = re.compile(
     r"(?:\s+food=(?P<food>{n}))?(?:\s+feeding=(?P<feeding>-?\d+))?(?:\s+dig=(?P<dig>{n}))?(?:\s+dug=(?P<dug>\d+))?"
     r"(?:\s+molts=(?P<molts>\d+))?(?:\s+molt=(?P<molt>{n}))?(?:\s+soft=(?P<soft>{n}))?(?:\s+over=(?P<over>[01]))?"
     r"(?:\s+scale=(?P<scale>{n}))?(?:\s+eaten=(?P<eaten>[01]))?(?:\s+cam=(?P<cam>{n}))?"
-    r"(?:\s+pitch=(?P<pitch>{n}))?".format(n=_NUM))
+    r"(?:\s+pitch=(?P<pitch>{n}))?(?:\s+under=(?P<under>[01]))?(?:\s+carry=(?P<carry>[01]))?"
+    r"(?:\s+rolled=(?P<rolled>\d+))?".format(n=_NUM))
 # Anything after t= is detail (patch=3 amount=0.412 ...), kept in rest.
 EVENT_RE = re.compile(r"CRABSIM_EVENT\s+(?P<name>[A-Za-z_]+)\s+t=(?P<t>{n})(?P<rest>.*)".format(n=_NUM))
 SCREEN_RE = re.compile(r"CRABSIM_SCREEN\s+t=(?P<t>{n})\s+view=(?P<vw>\d+)x(?P<vh>\d+)\s+"
                        r"crab=(?P<cx>{n}),(?P<cy>{n})(?P<rest>.*)".format(n=_NUM))
 GULL_RE = re.compile(r"CRABSIM_GULL\s+t=(?P<t>{n})\s+phase=(?P<phase>\w+)\s+loc=(?P<x>{n}),(?P<y>{n})\s+"
                      r"alt=(?P<alt>{n})\s+dist=(?P<dist>{n})\s+patch=(?P<patch>-?\d+)\s+count=(?P<count>\d+)".format(n=_NUM))
+# The colony's own line, once a second: whatever key=value pairs it logs, read generically (colony_detail below)
+# rather than as named fields, since its exact set is the colony actor's own choice.
+COLONY_RE = re.compile(r"CRABSIM_COLONY\s+t=(?P<t>{n})(?P<rest>.*)".format(n=_NUM))
 BURROW_RE = re.compile(r"burrow(?P<i>\d+)=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 PATCH_RE = re.compile(r"patch(?P<i>\d+)=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
 DIG_BUTTON_RE = re.compile(r"\sdig=(?P<x>{n}),(?P<y>{n})".format(n=_NUM))
@@ -235,9 +251,13 @@ READY_RE = re.compile(r"LogCrabSim:\s*CRABSIM_READY")
 PROBLEM_RE = re.compile(r"Fatal error|Ensure condition failed|Signal 11|SIGSEGV|Unhandled Exception")
 
 State = namedtuple("State", "t x y z yaw speed target dash grip depth water tide burrow dance anim skel swept "
-                            "food feeding dig dug molts molt soft over scale eaten cam pitch",
-                    defaults=(None,) * 19 + (0.0, 0.0))
+                            "food feeding dig dug molts molt soft over scale eaten cam pitch under carry rolled",
+                    defaults=(None,) * 19 + (0.0, 0.0) + (None, None, None))
 Event = namedtuple("Event", "name t rest", defaults=("",))
+# The colony's own state, once a second (CRABSIM_COLONY): t and rest, the raw key=value text after it, read
+# generically with colony_detail/colony_word below rather than as named fields (its own field set is the colony
+# actor's choice, not this script's).
+Colony = namedtuple("Colony", "t rest", defaults=("",))
 # view is (width, height) of the game viewport, crab is a pixel (or (-1, -1)), burrows and patches map index to a
 # pixel, dig, molt, newround, gofood, goburrow and onestick are the pixels at the middle of the HUD's dig button, molt
 # button, the results panel's new round button, the FOOD and BURROW buttons and the ONE STICK toggle (or None), and
@@ -270,7 +290,26 @@ def parse_state(line):
                  opt("burrow", int), opt("dance", lambda v: v == "1"), opt("anim", str),
                  opt("skel", int), opt("swept", int), opt("food", float), opt("feeding", int),
                  opt("dig", float), opt("dug", int), opt("molts", int), opt("molt", float), opt("soft", float),
-                 opt("over", lambda v: v == "1"), opt("scale", float), opt("eaten", lambda v: v == "1"), cam, pitch)
+                 opt("over", lambda v: v == "1"), opt("scale", float), opt("eaten", lambda v: v == "1"), cam, pitch,
+                 opt("under", lambda v: v == "1"), opt("carry", lambda v: v == "1"), opt("rolled", int))
+
+
+def parse_colony(line):
+    """A Colony from a CRABSIM_COLONY line, or None."""
+    m = COLONY_RE.search(line)
+    return Colony(float(m.group("t")), m.group("rest").strip()) if m else None
+
+
+def colony_detail(colony, key):
+    """The number after key= in a colony line's detail, or None."""
+    m = re.search(r"\b%s=(%s)" % (re.escape(key), _NUM), colony.rest)
+    return float(m.group(1)) if m else None
+
+
+def colony_word(colony, key):
+    """The word after key= in a colony line's detail, or None."""
+    m = re.search(r"\b%s=(\w+)" % re.escape(key), colony.rest)
+    return m.group(1) if m else None
 
 
 def parse_event(line):
@@ -375,6 +414,7 @@ class LogTail:
         self.events = []
         self.screens = []
         self.gulls = []
+        self.colonies = []
         self.ready = False
         self.problems = []
 
@@ -406,6 +446,10 @@ class LogTail:
                 gull = parse_gull(text)
                 if gull:
                     self.gulls.append(gull)
+            elif "CRABSIM_COLONY" in text:
+                colony = parse_colony(text)
+                if colony:
+                    self.colonies.append(colony)
             elif READY_RE.search(text):
                 self.ready = True
             elif PROBLEM_RE.search(text) and len(self.problems) < 5:
@@ -416,6 +460,9 @@ class LogTail:
 
     def latest_gull(self):
         return self.gulls[-1] if self.gulls else None
+
+    def latest_colony(self):
+        return self.colonies[-1] if self.colonies else None
 
 
 def process_alive(pid):
@@ -1818,9 +1865,129 @@ class Run:
 
         self.finish()
 
+    # ---- scenario colony: steps ----
+    def step_colony_reach_entrance(self):
+        """BURROW: the safest burrow is burrow 0, the colony's own entrance under the dune foot."""
+        print("-- BURROW: reach the colony's entrance burrow", flush=True)
+        mark, went = self.click_goto_button("goburrow", "BURROW", "goto_burrow")
+        if went is None:
+            return False
+        chosen = event_detail(went, "burrow")
+        chosen = None if chosen is None else int(chosen)
+        self.note("goto_burrow: %s" % went.rest)
+        self.check(chosen == COLONY_BURROW_INDEX, "the safest burrow is burrow %d, the colony's own entrance: goto_burrow says burrow=%s"
+                   % (COLONY_BURROW_INDEX, chosen))
+        enter = self.expect_event(mark, "burrow_enter", GOTO_BURROW_WINDOW, "walks there: burrow_enter event")
+        if enter is None:
+            return False
+        inside = self.state_at_or_after(mark.states, enter.t + 0.5)
+        self.describe("dug in", inside)
+        ok = inside is not None and inside.burrow == COLONY_BURROW_INDEX
+        self.check(ok, "dug in at burrow %d (burrow=%s)" % (COLONY_BURROW_INDEX, None if inside is None else inside.burrow))
+        return ok
+
+    def step_colony_down(self):
+        print("-- DIG (now DOWN): go down into the colony", flush=True)
+        screen = self.fresh_screen()
+        if screen is None or screen.dig is None:
+            self.check(False, "a CRABSIM_SCREEN line with the dig/DOWN button arrived")
+            return False
+        mark = self.click_view(screen, screen.dig, "the DOWN button (%.0f,%.0f)" % screen.dig)
+        if mark is None:
+            return False
+        self.expect_event(mark, "colony_enter", COLONY_DOWN_WINDOW, "click DOWN: colony_enter event")
+        self.expect_state(mark, lambda s: s.under == 1, COLONY_DOWN_WINDOW, "under=1 in the state")
+        self.shot("colony_down")
+        return True
+
+    def step_colony_eat(self):
+        print("-- FOOD (now EAT): eat from the colony's store", flush=True)
+        before = self.fresh(self.now_t() + STATE_INTERVAL)
+        self.describe("before", before)
+        screen = self.fresh_screen()
+        if screen is None or screen.gofood is None:
+            self.check(False, "a CRABSIM_SCREEN line with the FOOD/EAT button arrived")
+            return False
+        mark = self.click_view(screen, screen.gofood, "the EAT button (%.0f,%.0f)" % screen.gofood)
+        if mark is None:
+            return False
+        self.wait_clock(mark.t + COLONY_EAT_SECONDS)
+        fed = self.fresh(mark.t + COLONY_EAT_SECONDS)
+        self.describe("fed", fed)
+        self.check(before is not None and fed is not None and before.food is not None and fed.food is not None and fed.food > before.food,
+                   "eating from the store raises food: %s -> %s"
+                   % (None if before is None else "%.3f" % before.food, None if fed is None else "%.3f" % fed.food))
+        self.shot("colony_eat")
+        return True
+
+    def step_colony_dig(self):
+        """DIG again (now "help dig"): a new order stops EAT, then the crab walks to the active face and digs
+        until it holds a pellet (carry=1). The colony logs colony_eat amount=/store= itself, once a game tick
+        while eating: at a real frame rate one tick's own amount rounds to 0.000 at 3 decimals, so the store=
+        field across the run of colony_eat lines (falling) is what is checked, not any single amount=."""
+        print("-- DIG (now help dig): stops eating, then digs a pellet", flush=True)
+        screen = self.fresh_screen()
+        if screen is None or screen.dig is None:
+            self.check(False, "a CRABSIM_SCREEN line with the dig button arrived")
+            return False
+        before_click = self.mark()
+        eaten_so_far = [e for e in self.tail.events[:before_click.events] if e.name == "colony_eat"]
+        mark = self.click_view(screen, screen.dig, "the DIG button (%.0f,%.0f)" % screen.dig)
+        if mark is None:
+            return False
+        if eaten_so_far:
+            first_store = event_detail(eaten_so_far[0], "store")
+            last_store = event_detail(eaten_so_far[-1], "store")
+            self.check(first_store is not None and last_store is not None and last_store < first_store,
+                       "was eating: the store fell across %d colony_eat lines (%s -> %s)"
+                       % (len(eaten_so_far), first_store, last_store))
+        else:
+            self.check(False, "at least one colony_eat was logged while EAT was held")
+        carried = self.expect_state(mark, lambda s: s.carry == 1, COLONY_DIG_WINDOW, "carry=1 once a pellet's worth is dug")
+        self.shot("colony_dig")
+        return carried is not None
+
+    def step_colony_up(self):
+        print("-- BURROW (now UP): carry the pellet up and climb out", flush=True)
+        screen = self.fresh_screen()
+        if screen is None or screen.goburrow is None:
+            self.check(False, "a CRABSIM_SCREEN line with the BURROW/UP button arrived")
+            return False
+        mark = self.click_view(screen, screen.goburrow, "the UP button (%.0f,%.0f)" % screen.goburrow)
+        if mark is None:
+            return False
+        # The colony's own NPCs drop who=npc pellets on the same mound in the background, so the match must
+        # name the player's own, not just the first colony_pellet after the click.
+        self.expect_event_word(mark, "colony_pellet", "who", "player", COLONY_UP_WINDOW,
+                               "arriving with the pellet: colony_pellet who=player event")
+        self.expect_event(mark, "colony_exit", COLONY_UP_WINDOW, "climbing out: colony_exit event")
+        self.expect_state(mark, lambda s: s.under == 0 and s.burrow == COLONY_BURROW_INDEX, COLONY_UP_WINDOW,
+                          "under=0 burrow=%d: back on the beach, dug in" % COLONY_BURROW_INDEX)
+        self.shot("colony_up")
+        return True
+
+    # ---- scenario colony ----
+    def scenario_colony(self):
+        """Tide frozen, no gulls, CrabSim.StartFood 0.3: BURROW to the colony's entrance, DOWN, EAT, DIG (a
+        pellet), UP (rolled onto the mound). See GAME.md, "Colony".
+        """
+        first = self.begin(want_mouse=True, settle=SETTLE)
+        self.describe("first", first)
+        if first.under is None:
+            self.check(False, "the state lines carry under= (is this the colony build?)")
+            raise Abort("state lines have no under= field")
+        time.sleep(0.5)
+        self.shot("ready")
+        if self.step_colony_reach_entrance() and self.step_colony_down():
+            self.step_colony_eat()
+            self.step_colony_dig()
+            self.step_colony_up()
+        self.finish()
+
 
 SCENARIOS = {"basic": Run.scenario_basic, "tide": Run.scenario_tide, "forage": Run.scenario_forage, "molt": Run.scenario_molt,
-             "goto": Run.scenario_goto, "gull": Run.scenario_gull, "onestick": Run.scenario_onestick, "orbit": Run.scenario_orbit}
+             "goto": Run.scenario_goto, "gull": Run.scenario_gull, "onestick": Run.scenario_onestick, "orbit": Run.scenario_orbit,
+             "colony": Run.scenario_colony}
 
 
 def main():

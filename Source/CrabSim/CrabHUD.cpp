@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CrabHUD.h"
 #include "CrabBeach.h"
+#include "CrabColony.h"
 #include "CrabDigMath.h"
+#include "CrabFoodMath.h"
 #include "CrabGotoMath.h"
 #include "CrabGull.h"
 #include "CrabHudMath.h"
@@ -87,11 +89,15 @@ void ACrabHUD::DrawHUD()
 		TActorIterator<ACrabGull> It(World);
 		Gull = It ? *It : nullptr;
 	}
-	if (Gull && Gull->IsWarned() && !Crab->IsRoundOver())
+	if (Gull && Gull->IsWarned() && !Crab->IsRoundOver() && !Crab->IsUnderground())
 	{
 		DrawGullWarning(*Crab, *Gull, Scale);
 	}
 	DrawHints(*Crab, Gull && CrabGull::IsThreat(Gull->GetPhase()), Scale);
+	if (Crab->IsUnderground() && !Crab->IsRoundOver())
+	{
+		DrawColonyPanel(*Crab, Scale);
+	}
 	if (Crab->IsRoundOver())
 	{
 		DrawResults(*Crab, Scale);
@@ -187,8 +193,37 @@ void ACrabHUD::DrawFoodBar(const ACrabPawn& Crab, float Scale)
 	DrawText(TEXT("FOOD"), Text, X, Y - 26.f * Scale, Font, Scale * 0.8f);
 }
 
+FString ACrabHUD::DrawColonyDigButton(const ACrabPawn& Crab, float Scale)
+{
+	FString Reason;
+	if (Crab.IsCarryingPellet())
+	{
+		Reason = TEXT("Carry it up");
+	}
+	else if (const ACrabColony* Colony = Crab.GetColony())
+	{
+		if (Colony->GetActiveDigEdge() == INDEX_NONE)
+		{
+			Reason = TEXT("All dug");
+		}
+	}
+	DrawGotoButton(CrabHud::DigButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("DIG"), TEXT("help dig"), DigReady, Reason, Scale);
+	return Reason;
+}
+
 FString ACrabHUD::DrawDigButton(const ACrabPawn& Crab, float Scale)
 {
+	// Dug into the colony burrow on the surface: the button goes down instead of digging a new hole.
+	if (Crab.IsUnderground())
+	{
+		return DrawColonyDigButton(Crab, Scale);
+	}
+	if (Crab.IsInBurrow() && Crab.GetCurrentBurrow() == 0)
+	{
+		DrawGotoButton(CrabHud::DigButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("DOWN"), TEXT("the colony"), DigReady, FString(), Scale);
+		return FString();
+	}
+
 	UFont* Font = GEngine->GetMediumFont();
 	const FBox2D Rect = CrabHud::DigButtonRect(Canvas->SizeX, Canvas->SizeY);
 	const FVector2D Size = Rect.GetSize();
@@ -302,6 +337,24 @@ void ACrabHUD::DrawReasonLine(const FBox2D& Rect, const FString& Reason, float S
 
 FString ACrabHUD::DrawFoodButton(const ACrabPawn& Crab, float Scale)
 {
+	if (Crab.IsUnderground())
+	{
+		FString Reason;
+		if (CrabFood::IsFull(Crab.GetFood()))
+		{
+			Reason = TEXT("Not hungry");
+		}
+		else
+		{
+			const ACrabColony* Colony = Crab.GetColony();
+			if (!Colony || Colony->GetState().Store <= 0.f)
+			{
+				Reason = TEXT("Store empty");
+			}
+		}
+		DrawGotoButton(CrabHud::FoodButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("EAT"), TEXT("from the store"), FoodReady, Reason, Scale);
+		return Reason;
+	}
 	const FString Reason = CrabGoto::ReasonText(Crab.CheckGoToFood());
 	DrawGotoButton(CrabHud::FoodButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("FOOD"), TEXT("best patch"), FoodReady, Reason, Scale);
 	return Reason;
@@ -309,9 +362,37 @@ FString ACrabHUD::DrawFoodButton(const ACrabPawn& Crab, float Scale)
 
 FString ACrabHUD::DrawBurrowButton(const ACrabPawn& Crab, float Scale)
 {
+	if (Crab.IsUnderground())
+	{
+		DrawGotoButton(CrabHud::BurrowButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("UP"), TEXT("to the beach"), BurrowReady, FString(), Scale);
+		return FString();
+	}
 	const FString Reason = CrabGoto::ReasonText(Crab.CheckGoToBurrow());
 	DrawGotoButton(CrabHud::BurrowButtonRect(Canvas->SizeX, Canvas->SizeY), TEXT("BURROW"), TEXT("safest burrow"), BurrowReady, Reason, Scale);
 	return Reason;
+}
+
+void ACrabHUD::DrawColonyPanel(const ACrabPawn& Crab, float Scale)
+{
+	UFont* Font = GEngine->GetMediumFont();
+	const ACrabColony* Colony = Crab.GetColony();
+	if (!Colony)
+	{
+		return;
+	}
+	const FBox2D Rect = CrabHud::ColonyPanelRect(Canvas->SizeX, Canvas->SizeY);
+	const FVector2D Size = Rect.GetSize();
+	DrawRect(Panel, Rect.Min.X, Rect.Min.Y, Size.X, Size.Y);
+
+	const CrabColony::FColonyState& State = Colony->GetState();
+	const float Capacity = CrabColony::StoreCapacity(Colony->GetPlan(), State.Dig, Colony->GetTuning());
+	// The game calls the other crabs down here non-playable crabs, with a straight face, wherever it names them.
+	const FString Line = FString::Printf(TEXT("COLONY  %d non-playable crabs  food %.1f/%.1f  mound %d"),
+		Colony->GetPopulation(), State.Store, Capacity, State.PelletsOnMound);
+	float LineW = 0.f;
+	float LineH = 0.f;
+	GetTextSize(Line, LineW, LineH, Font, Scale * 0.85f);
+	DrawText(Line, Text, Rect.Min.X + (Size.X - LineW) * 0.5f, Rect.Min.Y + (Size.Y - LineH) * 0.5f, Font, Scale * 0.85f);
 }
 
 void ACrabHUD::DrawGotoButton(const FBox2D& Rect, const TCHAR* Label, const TCHAR* Hint, const FLinearColor& ReadyColour, const FString& Reason, float Scale)
@@ -393,9 +474,10 @@ void ACrabHUD::DrawResults(const ACrabPawn& Crab, float Scale)
 	Rows.Add({bEaten ? TEXT("Molts so far") : TEXT("Molts"), FString::Printf(TEXT("%d"), Crab.GetMolts()), Text});
 	Rows.Add({TEXT("Burrows dug"), FString::Printf(TEXT("%d"), Crab.GetRoundDug()), Text});
 	Rows.Add({TEXT("Food eaten"), FString::Printf(TEXT("%.1f"), Crab.GetRoundFoodEaten()), Text});
+	Rows.Add({TEXT("Pellets rolled"), FString::Printf(TEXT("%d"), Crab.GetPelletsRolled()), Text});
 	for (int32 Index = 0; Index < Rows.Num(); ++Index)
 	{
-		const float Y = PanelRect.Min.Y + (104.f + 36.f * Index) * Scale;
+		const float Y = PanelRect.Min.Y + (104.f + 34.f * Index) * Scale;
 		float ValueW = 0.f;
 		float ValueH = 0.f;
 		GetTextSize(Rows[Index].Value, ValueW, ValueH, Font, Scale * 1.3f);
@@ -443,7 +525,8 @@ void ACrabHUD::DrawHints(const ACrabPawn& Crab, bool bGullDown, float Scale)
 	UFont* Font = GEngine->GetMediumFont();
 	const IConsoleVariable* OneStickCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("CrabSim.OneStick"));
 	const bool bOneStick = OneStickCVar && OneStickCVar->GetInt() != 0;
-	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting(), Crab.IsRoundOver(), bGullDown, bOneStick);
+	const CrabHud::FHintText Hint = CrabHud::HintText(Crab.GetRoundSeconds(), Crab.IsInBurrow(), Crab.IsMolting(), Crab.IsRoundOver(), bGullDown, bOneStick,
+		Crab.IsUnderground(), Crab.IsCarryingPellet());
 	if (Hint.First.IsEmpty())
 	{
 		return;

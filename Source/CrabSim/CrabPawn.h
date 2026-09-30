@@ -10,8 +10,10 @@
 #include "CrabPawn.generated.h"
 
 class ACrabBeach;
+class ACrabColony;
 class UAnimSequence;
 class UCameraComponent;
+class UCrabCarryComponent;
 class UMaterialInterface;
 class USceneComponent;
 class USpringArmComponent;
@@ -89,6 +91,17 @@ public:
 	/** The camera's pitch at the start, degrees, negative looks down. CrabSim.CameraPitch sets it when changed. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Crab|Camera")
 	float CameraPitch = -38.f;
+
+	/**
+	 * Points the boom straight at the colony cutaway: for CrabSim.ColonyPreview, and a starting point for whoever
+	 * wires up the real trip down and up. Sets the boom's world location directly and CameraYaw/CameraPitch to
+	 * match ViewDir (Tick's ApplyCameraRotation reasserts those two onto the boom every frame the same way the
+	 * normal orbit does, so setting only the boom's rotation here would not survive the next tick), zeroes the arm
+	 * length so the camera sits exactly there rather than TargetArmLength further back, and drops camera lag so a
+	 * screenshot taken right after does not catch it still easing in. Minimal on purpose: switching back to the
+	 * normal orbit on the way up is the integration agent's job.
+	 */
+	void SetColonyCameraPreview(const FVector& LookAt, const FVector& ViewDir, float Distance);
 
 	// --- Dance --------------------------------------------------------------
 
@@ -178,6 +191,49 @@ public:
 	/** World Z of the highest of the peek's parts. */
 	float GetPeekTop() const;
 
+	// --- Colony (down and up) ---------------------------------------------------------
+
+	/**
+	 * True only while dug into the colony's burrow (0) and down in the cutaway. IsInBurrow() stays true the
+	 * whole time down here (CurrentBurrow is still 0), so the gull and tide rules up on the beach keep treating
+	 * the crab as safe in a burrow.
+	 */
+	bool IsUnderground() const { return bUnderground; }
+
+	/** Down into the colony from burrow 0. False when not dug into burrow 0, molting, already down, or there is no colony. */
+	bool GoDown();
+
+	/**
+	 * Back up to burrow 0 on the beach, dug in and peeking, exactly as before GoDown. Walks to the entrance
+	 * shaft first if the crab is not already there (a pellet it is carrying is dropped on the mound on arrival).
+	 */
+	void GoUp();
+
+	/** Where the crab stands in the colony's plan (U, V), while underground. */
+	FVector2D GetUndergroundUV() const { return UndergroundUV; }
+
+	/** Walk to a point in the colony's plan: a plain floor click, a held follow, or one-stick STEER. Clears on arrival. */
+	void SetUndergroundTarget(FVector2D UV);
+	void ClearUndergroundTarget();
+	bool HasUndergroundTarget() const { return bHasUndergroundTarget; }
+
+	/** Walk to the tunnel face being dug and help dig it. False, with a message, if the plan is done or a pellet is already held. */
+	bool GoToDigFace();
+	/** Walk to the nearest open pantry and eat from the colony's store. False, with a message, if full or the store is empty. */
+	bool GoToPantryAndEat();
+	/** Walk to a loose pellet lying on a tunnel floor and pick it up. False while already carrying one. */
+	bool WalkToLoosePellet(int32 Handle, FVector2D UV);
+	/** A click on the crab while it carries a pellet: sets it down at the crab's feet instead of dancing. */
+	void DropCarriedPelletAtFeet();
+	bool IsCarryingPellet() const;
+	bool IsUndergroundDigging() const { return bUndergroundDigging; }
+	bool IsUndergroundEating() const { return bUndergroundEating; }
+	/** Sand pellets the player has rolled up to the mound this round. */
+	int32 GetPelletsRolled() const { return PelletsRolled; }
+
+	/** The colony under the dune-foot burrow, found on first use. Null if there is none in the world yet. */
+	ACrabColony* GetColony() const;
+
 	// --- The round ------------------------------------------------------------------
 
 	/** Won at three molts, or lost to a gull. The results panel shows and the tide, feeding, digging and walking are ignored until a new round. */
@@ -260,6 +316,16 @@ public:
 	float BurrowSinkDistance = 110.f;
 
 private:
+	/** What arriving at an underground walk target does next. PickUpPellet's handle rides in UndergroundPelletHandle. */
+	enum class EUndergroundGoal : uint8
+	{
+		None,
+		GoUp,
+		Dig,
+		Eat,
+		PickUpPellet,
+	};
+
 	void BuildVisual();
 	void ApplyColors();
 	void TryUseSkeletalMesh();
@@ -271,6 +337,13 @@ private:
 	void UpdateGrowth(float DeltaSeconds);
 	void UpdatePeek(float DeltaSeconds);
 	void ApplyTestFood();
+	/** The whole underground tick: drains food, faces the glass, and runs whichever of dance/dig/eat/walk applies. Everything the surface Tick does (survival, burrow sink, peek, walking, foraging) is skipped instead. */
+	void TickUnderground(float DeltaSeconds);
+	void UpdateUndergroundWalk(float DeltaSeconds, ACrabColony& Colony);
+	void SetUndergroundTargetInternal(const FVector2D& UV, EUndergroundGoal Goal, int32 PelletHandle = INDEX_NONE);
+	void FinishGoUp();
+	void StopUndergroundDig();
+	void StopUndergroundEat();
 	void UpdateAnimation(float DeltaSeconds);
 	void UpdateProceduralDance(float DeltaSeconds);
 	void UpdateWorkPose(float DeltaSeconds);
@@ -342,6 +415,10 @@ private:
 	TObjectPtr<UAnimSequence> Clips[4];
 
 	mutable TWeakObjectPtr<ACrabBeach> BeachCache;
+	mutable TWeakObjectPtr<ACrabColony> ColonyCache;
+
+	UPROPERTY()
+	TObjectPtr<UCrabCarryComponent> Carry;
 
 	TArray<FVector> ClawBaseLocations;
 	FString Message;
@@ -390,6 +467,8 @@ private:
 	FVector2D RoundStartXY = FVector2D::ZeroVector;
 	float FeedBlend = 0.f;
 	float DigBlend = 0.f;
+	/** Seconds since the last feeding pellet was dropped behind the crab (every 3 s while it sifts). */
+	float FeedPelletTimer = 0.f;
 	float WorkClock = 0.f;
 	float WaterDepth = 0.f;
 	float BurrowSink = 0.f;
@@ -398,4 +477,25 @@ private:
 	float MessageTimeRemaining = 0.f;
 	float MessageDuration = 1.f;
 	bool bWasInSurge = false;
+
+	// --- Colony (down and up) ---------------------------------------------------------
+	bool bUnderground = false;
+	FVector2D UndergroundUV = FVector2D::ZeroVector;
+	bool bHasUndergroundTarget = false;
+	TArray<FVector2D> UndergroundWaypoints;
+	int32 UndergroundWaypointIndex = 0;
+	EUndergroundGoal UndergroundGoal = EUndergroundGoal::None;
+	int32 UndergroundPelletHandle = INDEX_NONE;
+	bool bUndergroundDigging = false;
+	bool bUndergroundEating = false;
+	/** Dug sand not yet rolled into a whole pellet, uu: CrabColony::PelletsFor's carry, kept across digging sessions. */
+	float PlayerDigPelletCarry = 0.f;
+	int32 PelletsRolled = 0;
+
+	/** The surface camera, remembered on GoDown and put back on GoUp. */
+	float SavedCameraYaw = 0.f;
+	float SavedCameraPitch = -38.f;
+	float SavedArmLength = 1000.f;
+	bool bSavedCameraLag = true;
+	FVector SavedCameraTargetOffset = FVector::ZeroVector;
 };

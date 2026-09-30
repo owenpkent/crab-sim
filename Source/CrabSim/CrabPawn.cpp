@@ -3,6 +3,9 @@
 #include "CrabOrbitMath.h"
 #include "CrabSim.h"
 #include "CrabBeach.h"
+#include "CrabCarryComponent.h"
+#include "CrabColony.h"
+#include "CrabColonyView.h"
 #include "CrabMovementMath.h"
 #include "CrabSurvivalMath.h"
 
@@ -88,6 +91,18 @@ namespace
 	constexpr float PeekBobHz = 0.7f;
 	constexpr float PeekEase = 7.f;
 
+	// The colony (down and up): how far the crab sinks below the mouth to stand at the top of the shaft, the
+	// camera's arm length looking into the cutaway, and how far its aim point is offset so the crab stands left
+	// of centre, clear of the HUD's FOOD/BURROW column which sits centre-right. Looking along ViewDirection
+	// (+Y, yaw 90), screen-right is world -X (CrabOrbit::ScreenToWorld's own yaw-0 convention, +Y right, rotated
+	// 90 degrees), so the aim point is offset by world -X to push the crab's own on-screen position to +X of it,
+	// i.e. toward screen-left: a plain +X offset here would instead centre on a point to the crab's -X, putting
+	// the crab on the screen's right, over the button column (confirmed live: CRABSIM_SCREEN put the crab's own
+	// pixel inside the EAT/FOOD button's hit rect, so a click meant for the crab hit the button instead).
+	constexpr float UndergroundShaftTopDrop = 40.f;
+	constexpr float UndergroundArmLength = 1400.f;
+	constexpr float UndergroundFramingOffsetX = -320.f;
+
 	const FLinearColor ShellColor = FLinearColor(0.75f, 0.16f, 0.06f);
 	const FLinearColor ClawColor = FLinearColor(0.9f, 0.28f, 0.08f);
 	const FLinearColor EyeColor = FLinearColor(0.02f, 0.02f, 0.02f);
@@ -139,6 +154,11 @@ ACrabPawn::ACrabPawn()
 	Visual = CreateDefaultSubobject<USceneComponent>(TEXT("Visual"));
 	Visual->SetupAttachment(GetCapsuleComponent());
 	Visual->SetRelativeLocation(FVector(0.f, 0.f, VisualBaseZ));
+
+	// The colony pellet, held in front of the claws (see UCrabCarryComponent's own comment).
+	Carry = CreateDefaultSubobject<UCrabCarryComponent>(TEXT("Carry"));
+	Carry->SetupAttachment(Visual);
+	Carry->SetRelativeLocation(FVector(70.f, 0.f, 4.f));
 
 	// Faces the camera whatever way the crab was heading when it dug in (yaw 180 puts its front toward it).
 	PeekRoot = CreateDefaultSubobject<USceneComponent>(TEXT("Peek"));
@@ -342,6 +362,29 @@ ACrabBeach* ACrabPawn::GetBeach() const
 	return nullptr;
 }
 
+ACrabColony* ACrabPawn::GetColony() const
+{
+	if (ACrabColony* Cached = ColonyCache.Get())
+	{
+		return Cached;
+	}
+	if (UWorld* World = GetWorld())
+	{
+		TActorIterator<ACrabColony> It(World);
+		if (It)
+		{
+			ColonyCache = *It;
+			return *It;
+		}
+	}
+	return nullptr;
+}
+
+bool ACrabPawn::IsCarryingPellet() const
+{
+	return Carry && Carry->GetCarrying() == ECarry::Pellet;
+}
+
 float ACrabPawn::GetFeetZ() const
 {
 	return GetActorLocation().Z - GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
@@ -420,7 +463,8 @@ void ACrabPawn::ClearMoveTarget()
 
 bool ACrabPawn::TryDash(const FVector& TowardWorldPoint)
 {
-	if (IsDashing() || DashCooldownRemaining > 0.f || bRoundOver)
+	// The cutaway has no dash: it is a walk-only view, and there is nowhere to burst to.
+	if (bUnderground || IsDashing() || DashCooldownRemaining > 0.f || bRoundOver)
 	{
 		return false;
 	}
@@ -459,7 +503,9 @@ bool ACrabPawn::StartDance()
 	{
 		return true;
 	}
-	if (IsInBurrow() || IsDashing() || bRoundOver || WaterDepth > CrabSurvival::SurgeDepth)
+	// Underground is a burrow (IsInBurrow() stays true down there) but dancing is allowed there: only an
+	// ordinary surface burrow refuses it.
+	if ((IsInBurrow() && !bUnderground) || IsDashing() || bRoundOver || WaterDepth > CrabSurvival::SurgeDepth)
 	{
 		return false;
 	}
@@ -468,6 +514,16 @@ bool ACrabPawn::StartDance()
 	CancelDig();
 	bDancing = true;
 	DanceClock = 0.f;
+	if (bUnderground)
+	{
+		ClearUndergroundTarget();
+		StopUndergroundDig();
+		StopUndergroundEat();
+		if (ACrabColony* Colony = GetColony())
+		{
+			Colony->PlayerDanced(UndergroundUV);
+		}
+	}
 	LogEvent(TEXT("dance_start"));
 	return true;
 }
@@ -743,6 +799,7 @@ bool ACrabPawn::StartFeeding(int32 PatchIndex)
 	StopFeeding();
 	FeedingPatch = PatchIndex;
 	FeedGained = 0.f;
+	FeedPelletTimer = 0.f;
 	LogEvent(TEXT("food_begin"), FString::Printf(TEXT("patch=%d richness=%.2f food=%.3f"), PatchIndex, Patch.Richness, Food));
 	return true;
 }
@@ -840,6 +897,10 @@ void ACrabPawn::FinishDig()
 	Food = FMath::Max(Food - CrabDig::FoodCost, 0.f);
 	SetMessage(TEXT("Burrow dug"));
 	LogEvent(TEXT("dig_done"), FString::Printf(TEXT("burrow=%d dug=%d food=%.3f"), Index, Beach->GetDugBurrowCount(), Food));
+	if (ACrabColony* Colony = GetColony())
+	{
+		Colony->ScatterBurrowPellets(Beach->GetBurrows()[Index].Location);
+	}
 }
 
 void ACrabPawn::UpdateForaging(float DeltaSeconds)
@@ -872,6 +933,16 @@ void ACrabPawn::UpdateForaging(float DeltaSeconds)
 			Food = FMath::Min(Food + Moved, 1.f);
 			FeedGained += Moved;
 			RoundFoodEaten += Moved;
+			// A trail of small feeding pellets behind the crab, the way a fiddler flat looks at low tide (decorative only).
+			FeedPelletTimer += DeltaSeconds;
+			if (FeedPelletTimer >= 3.f)
+			{
+				FeedPelletTimer = 0.f;
+				if (ACrabColony* Colony = GetColony())
+				{
+					Colony->DropFeedingPellet(GetActorLocation() - GetActorForwardVector() * 50.f);
+				}
+			}
 			if (CrabFood::IsEmpty(Patch->Richness))
 			{
 				EndFeeding(TEXT("Patch empty"));
@@ -1021,6 +1092,385 @@ void ACrabPawn::UpdateGrowth(float DeltaSeconds)
 	GetMesh()->SetRelativeScale3D(FVector(DisplayScale));
 }
 
+// --- Colony (down and up) ---------------------------------------------------------------------
+
+bool ACrabPawn::GoDown()
+{
+	if (bUnderground || bRoundOver || bMolting || !IsInBurrow() || CurrentBurrow != 0)
+	{
+		return false;
+	}
+	ACrabColony* Colony = GetColony();
+	if (!Colony)
+	{
+		return false;
+	}
+
+	StopDance();
+	StopFeeding();
+	CancelDig();
+	ClearMoveTarget();
+	DashTimeRemaining = 0.f;
+
+	bUnderground = true;
+	UndergroundUV = FVector2D::ZeroVector;
+	ClearUndergroundTarget();
+	Colony->SetPlayerUnderground(true);
+
+	// The surface look (the burrow sink and its peek stand-in) is frozen while underground: the model is
+	// shown in full down here instead, walking about in the cutaway.
+	BurrowSink = 0.f;
+	Visual->SetRelativeLocation(FVector(0.f, 0.f, VisualBase()));
+	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -CapsuleHalfHeight));
+	if (bUseSkeletalMesh)
+	{
+		GetMesh()->SetVisibility(true);
+	}
+	else
+	{
+		Visual->SetVisibility(true, true);
+	}
+	PeekBlend = 0.f;
+	PeekRoot->SetVisibility(false, true);
+	TargetMarker->SetHiddenInGame(true);
+
+	UCharacterMovementComponent* Move = GetCharacterMovement();
+	Move->StopMovementImmediately();
+	Move->SetMovementMode(MOVE_None);
+
+	// Side view along the cutaway's own ViewDirection, the crab framed left of centre (the HUD's FOOD/BURROW
+	// column sits centre-right): remembered so GoUp (FinishGoUp) can put the ordinary orbit back exactly.
+	SavedCameraYaw = CameraYaw;
+	SavedCameraPitch = CameraPitch;
+	SavedArmLength = CameraBoom->TargetArmLength;
+	bSavedCameraLag = CameraBoom->bEnableCameraLag;
+	SavedCameraTargetOffset = CameraBoom->TargetOffset;
+
+	const FRotator ViewRotation = UCrabColonyViewComponent::ViewDirection().Rotation();
+	CameraYaw = ViewRotation.Yaw;
+	CameraPitch = ViewRotation.Pitch;
+	CameraBoom->TargetArmLength = UndergroundArmLength;
+	CameraBoom->bEnableCameraLag = true;
+	CameraBoom->TargetOffset = FVector(UndergroundFramingOffsetX, 0.f, 0.f);
+	ApplyCameraRotation();
+
+	// Side on to the glass, the same facing the dance uses down here (CameraYaw + DanceFacingYaw).
+	SetActorRotation(FRotator(0.f, FRotator::NormalizeAxis(CameraYaw + DanceFacingYaw), 0.f));
+	SetActorLocation(Colony->PlanToWorld(FVector2D::ZeroVector) - FVector(0.f, 0.f, UndergroundShaftTopDrop),
+		false, nullptr, ETeleportType::TeleportPhysics);
+
+	// Colony->SetPlayerUnderground, just above, logs colony_enter itself on a real transition: not logged again here.
+	return true;
+}
+
+void ACrabPawn::GoUp()
+{
+	if (!bUnderground)
+	{
+		return;
+	}
+	SetUndergroundTargetInternal(FVector2D::ZeroVector, EUndergroundGoal::GoUp);
+}
+
+void ACrabPawn::FinishGoUp()
+{
+	ACrabColony* Colony = GetColony();
+	if (Colony && IsCarryingPellet())
+	{
+		// AddMoundPellet logs colony_pellet who=player itself: not logged again here.
+		Colony->AddMoundPellet(TEXT("player"));
+		++PelletsRolled;
+	}
+	if (Carry)
+	{
+		Carry->SetCarrying(ECarry::None);
+	}
+	StopUndergroundDig();
+	StopUndergroundEat();
+	StopDance();
+	ClearUndergroundTarget();
+	bUnderground = false;
+	if (Colony)
+	{
+		Colony->SetPlayerUnderground(false);
+	}
+
+	CameraYaw = SavedCameraYaw;
+	CameraPitch = SavedCameraPitch;
+	CameraBoom->TargetArmLength = SavedArmLength;
+	CameraBoom->bEnableCameraLag = bSavedCameraLag;
+	CameraBoom->TargetOffset = SavedCameraTargetOffset;
+	ApplyCameraRotation();
+
+	// Back on the beach at burrow 0: CurrentBurrow never changed, so the ordinary UpdateBurrowSink/UpdatePeek
+	// that resume next tick sink the model and raise the peek exactly as they do for any other burrow.
+	if (const ACrabBeach* Beach = GetBeach())
+	{
+		if (Beach->GetBurrows().IsValidIndex(0))
+		{
+			const FCrabBurrow& Burrow = Beach->GetBurrows()[0];
+			SetActorLocation(FVector(Burrow.Location.X, Burrow.Location.Y, Burrow.Location.Z + GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 2.f),
+				false, nullptr, ETeleportType::TeleportPhysics);
+		}
+	}
+	UCharacterMovementComponent* Move = GetCharacterMovement();
+	Move->SetMovementMode(MOVE_Walking);
+	Move->StopMovementImmediately();
+	// Colony->SetPlayerUnderground, above, logs colony_exit itself on a real transition: not logged again here.
+}
+
+void ACrabPawn::SetUndergroundTarget(FVector2D UV)
+{
+	SetUndergroundTargetInternal(UV, EUndergroundGoal::None);
+}
+
+void ACrabPawn::ClearUndergroundTarget()
+{
+	bHasUndergroundTarget = false;
+	UndergroundGoal = EUndergroundGoal::None;
+	UndergroundPelletHandle = INDEX_NONE;
+	UndergroundWaypoints.Reset();
+	UndergroundWaypointIndex = 0;
+}
+
+void ACrabPawn::SetUndergroundTargetInternal(const FVector2D& UV, EUndergroundGoal Goal, int32 PelletHandle)
+{
+	ACrabColony* Colony = GetColony();
+	if (!bUnderground || !Colony)
+	{
+		return;
+	}
+	// Any new order interrupts digging or eating in progress, the same as a surface walk cancels a dig.
+	StopUndergroundDig();
+	StopUndergroundEat();
+
+	const CrabColony::FBlueprint& Plan = Colony->GetPlan();
+	const CrabColony::FDigState& Dig = Colony->GetState().Dig;
+	const CrabColony::FSpot From = CrabColony::NearestSpot(Plan, Dig, UndergroundUV);
+	const CrabColony::FSpot To = CrabColony::NearestSpot(Plan, Dig, UV);
+	TArray<FVector2D> Waypoints;
+	if (!CrabColony::FindPath(Plan, Dig, From, To, Waypoints) || Waypoints.Num() == 0)
+	{
+		return;
+	}
+	UndergroundWaypoints = MoveTemp(Waypoints);
+	UndergroundWaypointIndex = 0;
+	bHasUndergroundTarget = true;
+	UndergroundGoal = Goal;
+	UndergroundPelletHandle = PelletHandle;
+}
+
+bool ACrabPawn::GoToDigFace()
+{
+	if (!bUnderground)
+	{
+		return false;
+	}
+	if (bUndergroundDigging)
+	{
+		return true;
+	}
+	ACrabColony* Colony = GetColony();
+	if (!Colony)
+	{
+		return false;
+	}
+	if (IsCarryingPellet())
+	{
+		SetMessage(TEXT("Carry it up"));
+		return false;
+	}
+	if (Colony->GetActiveDigEdge() == INDEX_NONE)
+	{
+		SetMessage(TEXT("All dug"));
+		return false;
+	}
+	SetUndergroundTargetInternal(Colony->GetDigFacePos(), EUndergroundGoal::Dig);
+	return true;
+}
+
+bool ACrabPawn::GoToPantryAndEat()
+{
+	if (!bUnderground)
+	{
+		return false;
+	}
+	if (bUndergroundEating)
+	{
+		return true;
+	}
+	ACrabColony* Colony = GetColony();
+	if (!Colony)
+	{
+		return false;
+	}
+	if (CrabFood::IsFull(Food))
+	{
+		SetMessage(TEXT("Not hungry"));
+		return false;
+	}
+	if (Colony->GetState().Store <= 0.f)
+	{
+		SetMessage(TEXT("Store empty"));
+		return false;
+	}
+	const int32 PantryNode = Colony->FindPantryNear(UndergroundUV);
+	if (PantryNode == INDEX_NONE)
+	{
+		return false;
+	}
+	SetUndergroundTargetInternal(Colony->GetPlan().Nodes[PantryNode].Pos, EUndergroundGoal::Eat);
+	return true;
+}
+
+bool ACrabPawn::WalkToLoosePellet(int32 Handle, FVector2D UV)
+{
+	if (!bUnderground || IsCarryingPellet() || Handle == INDEX_NONE)
+	{
+		return false;
+	}
+	SetUndergroundTargetInternal(UV, EUndergroundGoal::PickUpPellet, Handle);
+	return true;
+}
+
+void ACrabPawn::DropCarriedPelletAtFeet()
+{
+	if (!bUnderground || !IsCarryingPellet())
+	{
+		return;
+	}
+	if (ACrabColony* Colony = GetColony())
+	{
+		Colony->AddLoosePellet(UndergroundUV);
+	}
+	if (Carry)
+	{
+		Carry->SetCarrying(ECarry::None);
+	}
+}
+
+void ACrabPawn::StopUndergroundDig()
+{
+	bUndergroundDigging = false;
+}
+
+void ACrabPawn::StopUndergroundEat()
+{
+	// Colony->PlayerEat logs colony_eat itself, every time it hands over any food: not logged again here.
+	bUndergroundEating = false;
+}
+
+void ACrabPawn::UpdateUndergroundWalk(float DeltaSeconds, ACrabColony& Colony)
+{
+	if (!bHasUndergroundTarget)
+	{
+		return;
+	}
+	UndergroundUV = CrabColony::StepAlong(UndergroundWaypoints, UndergroundUV, SideSpeed * DeltaSeconds, UndergroundWaypointIndex);
+	SetActorLocation(Colony.PlanToWorld(UndergroundUV));
+	if (UndergroundWaypointIndex < UndergroundWaypoints.Num())
+	{
+		return;
+	}
+
+	bHasUndergroundTarget = false;
+	const EUndergroundGoal Goal = UndergroundGoal;
+	const int32 PelletHandle = UndergroundPelletHandle;
+	UndergroundGoal = EUndergroundGoal::None;
+	UndergroundPelletHandle = INDEX_NONE;
+	switch (Goal)
+	{
+	case EUndergroundGoal::GoUp:
+		FinishGoUp();
+		break;
+	case EUndergroundGoal::Dig:
+		if (!IsCarryingPellet() && Colony.GetActiveDigEdge() != INDEX_NONE)
+		{
+			bUndergroundDigging = true;
+		}
+		break;
+	case EUndergroundGoal::Eat:
+		if (!CrabFood::IsFull(Food) && Colony.GetState().Store > 0.f)
+		{
+			bUndergroundEating = true;
+		}
+		break;
+	case EUndergroundGoal::PickUpPellet:
+		Colony.RemoveLoosePellet(PelletHandle);
+		if (Carry)
+		{
+			Carry->SetCarrying(ECarry::Pellet);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+void ACrabPawn::TickUnderground(float DeltaSeconds)
+{
+	// The results panel holds everything still down here too: no drain, no walk, no dig or eat.
+	if (bRoundOver)
+	{
+		return;
+	}
+	// Food drains as usual; there is no water, grip or surge down here.
+	Food = CrabFood::FoodAfterDrain(Food, DeltaSeconds);
+	WaterDepth = 0.f;
+
+	ACrabColony* Colony = GetColony();
+	if (!Colony)
+	{
+		return;
+	}
+
+	// Side on to the glass throughout: walking, digging, eating or standing still, the same facing the dance
+	// uses (CameraYaw + DanceFacingYaw), whichever way the crab is headed along a tunnel.
+	SetActorRotation(FRotator(0.f, FRotator::NormalizeAxis(CameraYaw + DanceFacingYaw), 0.f));
+
+	if (bDancing)
+	{
+		return;
+	}
+	if (bUndergroundDigging)
+	{
+		if (Colony->GetActiveDigEdge() == INDEX_NONE)
+		{
+			bUndergroundDigging = false;
+			return;
+		}
+		const float Dug = Colony->PlayerDig(DeltaSeconds);
+		const int32 Pellets = CrabColony::PelletsFor(Dug, PlayerDigPelletCarry, Colony->GetTuning());
+		if (Pellets > 0)
+		{
+			// Holds one at a time: digging pauses while it carries this one up.
+			if (Carry)
+			{
+				Carry->SetCarrying(ECarry::Pellet);
+			}
+			bUndergroundDigging = false;
+		}
+		return;
+	}
+	if (bUndergroundEating)
+	{
+		const float Room = 1.f - Food;
+		if (Room <= KINDA_SMALL_NUMBER || Colony->GetState().Store <= 0.f)
+		{
+			StopUndergroundEat();
+			return;
+		}
+		const float Eaten = Colony->PlayerEat(DeltaSeconds, Room);
+		Food = FMath::Min(Food + Eaten, 1.f);
+		if (Eaten <= 0.f)
+		{
+			StopUndergroundEat();
+		}
+		return;
+	}
+	UpdateUndergroundWalk(DeltaSeconds, *Colony);
+}
+
 // --- The round -------------------------------------------------------------------------------
 
 void ACrabPawn::WinRound()
@@ -1068,6 +1518,12 @@ void ACrabPawn::EatenByGull()
 void ACrabPawn::StartNewRound()
 {
 	ACrabBeach* Beach = GetBeach();
+	ACrabColony* Colony = GetColony();
+	// Up first: FinishGoUp puts the camera and the movement mode back before the rest resets position and state.
+	if (bUnderground)
+	{
+		FinishGoUp();
+	}
 	CancelMolt(TEXT("new round"));
 	ExitBurrow();
 	StopDance();
@@ -1102,6 +1558,16 @@ void ACrabPawn::StartNewRound()
 	if (Beach)
 	{
 		Beach->ResetForNewRound();
+	}
+	if (Colony)
+	{
+		Colony->ResetForNewRound();
+	}
+	PelletsRolled = 0;
+	PlayerDigPelletCarry = 0.f;
+	if (Carry)
+	{
+		Carry->SetCarrying(ECarry::None);
 	}
 	const float Half = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 	const float Ground = Beach ? Beach->GetGroundHeight(RoundStartXY.X, RoundStartXY.Y) : GetActorLocation().Z - Half;
@@ -1334,7 +1800,9 @@ void ACrabPawn::SetAnimState(ECrabAnim NewState)
 void ACrabPawn::UpdateAnimation(float DeltaSeconds)
 {
 	const FVector Velocity = GetCharacterMovement()->Velocity;
-	const float Speed = Velocity.Size2D();
+	// Underground movement is kinematic (SetActorLocation, not the movement component), so it leaves no
+	// velocity for this to read: stand in a walking speed whenever it actually has somewhere to walk to.
+	const float Speed = (bUnderground && bHasUndergroundTarget) ? SideSpeed : Velocity.Size2D();
 
 	ECrabAnim Desired = ECrabAnim::Idle;
 	if (IsDashing())
@@ -1345,7 +1813,7 @@ void ACrabPawn::UpdateAnimation(float DeltaSeconds)
 	{
 		Desired = ECrabAnim::Dance;
 	}
-	else if (Speed > 40.f && !IsInBurrow())
+	else if (Speed > 40.f && (!IsInBurrow() || bUnderground))
 	{
 		Desired = ECrabAnim::Scuttle;
 	}
@@ -1390,8 +1858,8 @@ void ACrabPawn::UpdateProceduralDance(float DeltaSeconds)
 void ACrabPawn::UpdateWorkPose(float DeltaSeconds)
 {
 	FeedBlend = FMath::FInterpTo(FeedBlend, IsFeeding() ? 1.f : 0.f, DeltaSeconds, 8.f);
-	DigBlend = FMath::FInterpTo(DigBlend, bDigging ? 1.f : 0.f, DeltaSeconds, 8.f);
-	if (IsFeeding() || bDigging)
+	DigBlend = FMath::FInterpTo(DigBlend, (bDigging || bUndergroundDigging) ? 1.f : 0.f, DeltaSeconds, 8.f);
+	if (IsFeeding() || bDigging || bUndergroundDigging)
 	{
 		WorkClock += DeltaSeconds;
 	}
@@ -1437,6 +1905,21 @@ void ACrabPawn::SetCameraPitch(float Degrees)
 	ApplyCameraRotation();
 }
 
+void ACrabPawn::SetColonyCameraPreview(const FVector& LookAt, const FVector& ViewDir, float Distance)
+{
+	const FVector Direction = ViewDir.GetSafeNormal();
+	const FRotator LookRotation = Direction.Rotation();
+	// Tick calls ApplyCameraRotation every frame, which reasserts CameraYaw/CameraPitch onto the boom (the normal
+	// orbit works the same way): setting the boom's rotation here directly would only last until the next tick.
+	// Setting the fields it reads instead makes the look stick.
+	CameraYaw = LookRotation.Yaw;
+	CameraPitch = LookRotation.Pitch;
+	CameraBoom->bEnableCameraLag = false;
+	CameraBoom->TargetArmLength = 0.f;
+	CameraBoom->SetWorldLocation(LookAt - Direction * Distance);
+	ApplyCameraRotation();
+}
+
 void ACrabPawn::ApplyCameraRotation()
 {
 	const float PitchOverride = CVarCameraPitch.GetValueOnGameThread();
@@ -1459,8 +1942,9 @@ void ACrabPawn::Tick(float DeltaSeconds)
 	DashCooldownRemaining = FMath::Max(0.f, DashCooldownRemaining - DeltaSeconds);
 	MessageTimeRemaining = FMath::Max(0.f, MessageTimeRemaining - DeltaSeconds);
 
+	// Underground the arm length and pitch are the cutaway's own (GoDown), not this test override or the orbit's.
 	const float CameraDistance = CVarCameraDistance.GetValueOnGameThread();
-	if (CameraDistance > 0.f)
+	if (CameraDistance > 0.f && !bUnderground)
 	{
 		CameraBoom->TargetArmLength = CameraDistance;
 	}
@@ -1471,13 +1955,24 @@ void ACrabPawn::Tick(float DeltaSeconds)
 		RoundSeconds += DeltaSeconds;
 	}
 	ApplyTestFood();
-	UpdateSurvival(DeltaSeconds);
 	UpdateMolting(DeltaSeconds);
 	UpdateGrowth(DeltaSeconds);
-	UpdateBurrowSink(DeltaSeconds);
-	UpdatePeek(DeltaSeconds);
-	UpdateWalking(DeltaSeconds);
-	UpdateForaging(DeltaSeconds);
+
+	// One branch for the whole colony trip: underground skips every beach-only system (survival, burrow sink,
+	// peek, surface walking and foraging) and runs its own tick instead. Being eaten cannot happen down here:
+	// the gull never sees the crab, and IsInBurrow() (CurrentBurrow is still 0) already keeps it out of reach.
+	if (bUnderground)
+	{
+		TickUnderground(DeltaSeconds);
+	}
+	else
+	{
+		UpdateSurvival(DeltaSeconds);
+		UpdateBurrowSink(DeltaSeconds);
+		UpdatePeek(DeltaSeconds);
+		UpdateWalking(DeltaSeconds);
+		UpdateForaging(DeltaSeconds);
+	}
 	UpdateAnimation(DeltaSeconds);
 	UpdateWorkPose(DeltaSeconds);
 
@@ -1497,12 +1992,13 @@ void ACrabPawn::LogState() const
 	const FVector Location = GetActorLocation();
 	const FString Target = bHasTarget ? FString::Printf(TEXT("%.1f,%.1f"), MoveTarget.X, MoveTarget.Y) : FString(TEXT("none"));
 	const ACrabBeach* Beach = GetBeach();
-	// The live test parses everything up to dash=. New fields go after it.
-	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d molts=%d molt=%.2f soft=%.1f over=%d scale=%.3f eaten=%d cam=%.1f pitch=%.1f"),
+	// The live test parses everything up to dash=. New fields go after it; under=/carry=/rolled= are the newest, at the end.
+	UE_LOG(LogCrabSim, Log, TEXT("CRABSIM_STATE t=%.2f loc=%.1f,%.1f,%.1f yaw=%.1f speed=%.1f target=%s dash=%d grip=%.2f depth=%.1f water=%.1f tide=%.2f burrow=%d dance=%d anim=%s skel=%d swept=%d food=%.3f feeding=%d dig=%.2f dug=%d molts=%d molt=%.2f soft=%.1f over=%d scale=%.3f eaten=%d cam=%.1f pitch=%.1f under=%d carry=%d rolled=%d"),
 		GetWorld()->GetTimeSeconds(), Location.X, Location.Y, Location.Z,
 		FRotator::NormalizeAxis(GetActorRotation().Yaw), GetCharacterMovement()->Velocity.Size2D(), *Target, IsDashing() ? 1 : 0,
 		Grip, WaterDepth, Beach ? Beach->GetSurfaceLevel() : 0.f, Beach ? Beach->GetTideFraction() : 0.f,
 		CurrentBurrow, bDancing ? 1 : 0, AnimName(AnimState), bUseSkeletalMesh ? 1 : 0, SweptCount,
 		Food, FeedingPatch, GetDigProgress(), Beach ? Beach->GetDugBurrowCount() : 0,
-		Molts, GetMoltProgress(), SoftRemaining, bRoundOver ? 1 : 0, ShownGrowth, bEaten ? 1 : 0, CameraYaw, CameraPitch);
+		Molts, GetMoltProgress(), SoftRemaining, bRoundOver ? 1 : 0, ShownGrowth, bEaten ? 1 : 0, CameraYaw, CameraPitch,
+		bUnderground ? 1 : 0, IsCarryingPellet() ? 1 : 0, PelletsRolled);
 }

@@ -6,6 +6,7 @@
 #include "CrabSimGameMode.generated.h"
 
 class ACrabBeach;
+class ACrabColony;
 class ACrabGull;
 
 /**
@@ -24,6 +25,7 @@ public:
 
 	ACrabBeach* GetBeach() const { return Beach; }
 	ACrabGull* GetGull() const { return Gull; }
+	ACrabColony* GetColony() const { return Colony; }
 
 	/** Where the crab starts, world XY. The beach keeps rocks well clear of it. */
 	UPROPERTY(EditAnywhere, Category = "Crab")
@@ -39,4 +41,7 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<ACrabGull> Gull;
+
+	UPROPERTY()
+	TObjectPtr<ACrabColony> Colony;
 };

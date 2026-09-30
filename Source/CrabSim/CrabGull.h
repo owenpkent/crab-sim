@@ -54,6 +54,13 @@ public:
 	/** Start over as for a new round: no gull, nothing owed, a fresh seed. */
 	void ResetForNewRound(int32 RoundIndex);
 
+	/**
+	 * Hides the gull regardless of IsActive, and stops it from un-hiding itself: for ACrabColony::SetPlayerUnderground,
+	 * since the beach, the sea and the gull are not drawn while the crab is down (GAME.md, "Colony (building)"), even
+	 * though the gull goes on hunting up there unseen. False puts UpdateVisual's own IsActive check back in charge.
+	 */
+	void SetSuppressed(bool bNewSuppressed) { bSuppressed = bNewSuppressed; }
+
 	/** The seed a round's gulls come from: this and the round's number. */
 	UPROPERTY(EditAnywhere, Category = "Gull")
 	int32 Seed = 11;
@@ -115,4 +122,5 @@ private:
 	float LogTimer = 0.f;
 	float WingTilt = -78.f;
 	bool bRingShown = false;
+	bool bSuppressed = false;
 };

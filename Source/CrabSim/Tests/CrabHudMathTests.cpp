@@ -538,6 +538,43 @@ bool FCrabHudOneStickButtonTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// --- Colony -------------------------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudColonyPanelTest, "CrabSim.Hud.ColonyPanelSitsTopCentreInsideTheView", TestFlags)
+bool FCrabHudColonyPanelTest::RunTest(const FString& Parameters)
+{
+	for (const FIntPoint& View : MoltViews)
+	{
+		const FBox2D Panel = CrabHud::ColonyPanelRect(View.X, View.Y);
+		TestTrue(*FString::Printf(TEXT("at %dx%d it is inside the view"), View.X, View.Y),
+			Panel.Min.X >= 0.f && Panel.Min.Y >= 0.f && Panel.Max.X <= View.X && Panel.Max.Y <= View.Y);
+		TestNearlyEqual(*FString::Printf(TEXT("at %dx%d it is centred across"), View.X, View.Y), static_cast<float>(Panel.GetCenter().X), View.X * 0.5f, 0.01f);
+		TestTrue(TEXT("near the top"), Panel.Min.Y < View.Y * 0.1f);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudColonyHintTest, "CrabSim.Hud.TheHelpLineSpeaksOfTheColonyUnderground", TestFlags)
+bool FCrabHudColonyHintTest::RunTest(const FString& Parameters)
+{
+	const CrabHud::FHintText Plain = CrabHud::HintText(10.f, false, false, false, false, false, /*bUnderground=*/true, false);
+	TestTrue(TEXT("says a click walks"), Plain.First.Contains(TEXT("Click: walk")));
+	TestTrue(TEXT("and the crab dances"), Plain.First.Contains(TEXT("dance")));
+	TestTrue(TEXT("fits the panel"), Plain.First.Len() <= 40);
+
+	const CrabHud::FHintText Carrying = CrabHud::HintText(10.f, false, false, false, false, false, true, /*bCarryingPellet=*/true);
+	TestTrue(TEXT("carrying a pellet says to bring it up"), Carrying.First.Contains(TEXT("Carry it up")));
+	TestTrue(TEXT("and names UP"), Carrying.First.Contains(TEXT("UP")));
+
+	const CrabHud::FHintText Molting = CrabHud::HintText(10.f, false, /*bMolting=*/true, false, false, false, true, false);
+	TestTrue(TEXT("molting underground still says how to cancel"), Molting.First.Contains(TEXT("cancel")));
+
+	TestTrue(TEXT("shows straight away, ahead of the first minute's intro"),
+		CrabHud::HintText(0.f, false, false, false, false, false, true, false).First.Contains(TEXT("Click: walk")));
+	TestTrue(TEXT("the results panel still beats it"), CrabHud::HintText(10.f, false, false, true, false, false, true, false).First.IsEmpty());
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabHudStickMenuLayoutTest, "CrabSim.Hud.StickMenuColumnStacksClearOfEverythingElse", TestFlags)
 bool FCrabHudStickMenuLayoutTest::RunTest(const FString& Parameters)
 {

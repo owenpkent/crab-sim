@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Misc/AutomationTest.h"
+#include "CrabColony.h"
 #include "CrabTestHelpers.h"
 #include "CrabPlayerController.h"
 
@@ -304,5 +305,174 @@ bool FCrabControllerStopDanceNoWalkTest::RunTest(const FString& Parameters)
 	}
 	TestFalse(TEXT("no walking target"), Rig.Crab->HasMoveTarget());
 	TestTrue(TEXT("the crab has not moved"), FVector::Dist2D(Before, Rig.Crab->GetActorLocation()) < 6.f);
+	return true;
+}
+
+// --- Underground (the colony) ------------------------------------------------------------------
+
+namespace
+{
+	/** A beach, the colony under burrow 0, a crab ready to dig in, and the pointer controller (not possessing). */
+	struct FUndergroundControllerRig
+	{
+		FCrabTestWorld World;
+		ACrabBeach* Beach = nullptr;
+		ACrabColony* Colony = nullptr;
+		ACrabPawn* Crab = nullptr;
+		ACrabPlayerController* Controller = nullptr;
+
+		FUndergroundControllerRig()
+		{
+			if (World.IsReady())
+			{
+				Beach = SpawnBeach(World);
+				if (Beach)
+				{
+					Colony = World.SpawnActor<ACrabColony>();
+					Crab = SpawnCrab(World, *Beach);
+					Controller = World.SpawnActor<ACrabPlayerController>();
+				}
+				if (Crab)
+				{
+					Settle(World);
+				}
+			}
+		}
+
+		bool IsValid() const { return World.IsReady() && Beach && Colony && Crab && Controller; }
+
+		/** Digs into the entrance burrow and goes down, ready for an underground click. */
+		bool GoDown()
+		{
+			if (!Crab->EnterBurrow(HighBurrow))
+			{
+				return false;
+			}
+			World.TickSeconds(1.f);
+			return Crab->GoDown();
+		}
+	};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerUndergroundClickCrabDancesTest, "CrabSim.Controller.UndergroundClickOnTheCrabDances", TestFlags)
+bool FCrabControllerUndergroundClickCrabDancesTest::RunTest(const FString& Parameters)
+{
+	FUndergroundControllerRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()) || !TestTrue(TEXT("down"), Rig.GoDown()))
+	{
+		return false;
+	}
+	Rig.Controller->HandleUndergroundClick(*Rig.Crab, Rig.Crab->GetUndergroundUV());
+	TestTrue(TEXT("dancing"), Rig.Crab->IsDancing());
+	Rig.Controller->HandleUndergroundClick(*Rig.Crab, Rig.Crab->GetUndergroundUV());
+	TestFalse(TEXT("clicking it again stops the dance"), Rig.Crab->IsDancing());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerUndergroundClickCrabDropsCarriedPelletTest, "CrabSim.Controller.UndergroundClickOnTheCrabDropsAPelletInsteadOfDancing", TestFlags)
+bool FCrabControllerUndergroundClickCrabDropsCarriedPelletTest::RunTest(const FString& Parameters)
+{
+	FUndergroundControllerRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()) || !TestTrue(TEXT("down"), Rig.GoDown()))
+	{
+		return false;
+	}
+	// Dig a pellet's worth so the crab is carrying one.
+	Rig.Crab->GoToDigFace();
+	for (int32 Frame = 0; Frame < 600 && !Rig.Crab->IsCarryingPellet(); ++Frame)
+	{
+		Rig.World.TickN(1, 1.f / 60.f);
+	}
+	if (!TestTrue(TEXT("carrying a pellet"), Rig.Crab->IsCarryingPellet()))
+	{
+		return false;
+	}
+
+	Rig.Controller->HandleUndergroundClick(*Rig.Crab, Rig.Crab->GetUndergroundUV());
+	TestFalse(TEXT("set down, not danced"), Rig.Crab->IsCarryingPellet());
+	TestFalse(TEXT("and it did not start dancing"), Rig.Crab->IsDancing());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerUndergroundClickLoosePelletWalksToItTest, "CrabSim.Controller.UndergroundClickNearALoosePelletWalksToPickItUp", TestFlags)
+bool FCrabControllerUndergroundClickLoosePelletWalksToItTest::RunTest(const FString& Parameters)
+{
+	FUndergroundControllerRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()) || !TestTrue(TEXT("down"), Rig.GoDown()))
+	{
+		return false;
+	}
+	// Away from the mouth first, so the pellet is not also within dance range of the crab's own start point.
+	const FVector2D Upper = Rig.Colony->GetPlan().Nodes[1].Pos;
+	Rig.Crab->SetUndergroundTarget(Upper);
+	Rig.World.TickSeconds(3.f);
+
+	// Well beyond DanceClickRadius (80) from the crab's own body, so this click is not mistaken for one on the crab.
+	const FVector2D PelletUV = Rig.Crab->GetUndergroundUV() + FVector2D(150.f, 0.f);
+	Rig.Colony->AddLoosePellet(PelletUV);
+	Rig.Crab->ClearUndergroundTarget();
+
+	Rig.Controller->HandleUndergroundClick(*Rig.Crab, PelletUV);
+	TestFalse(TEXT("not a dance"), Rig.Crab->IsDancing());
+	TestTrue(TEXT("walking to pick it up"), Rig.Crab->HasUndergroundTarget());
+	Rig.World.TickSeconds(2.f);
+	TestTrue(TEXT("picked it up"), Rig.Crab->IsCarryingPellet());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerUndergroundClickShaftTopGoesUpTest, "CrabSim.Controller.UndergroundClickNearTheShaftTopGoesUp", TestFlags)
+bool FCrabControllerUndergroundClickShaftTopGoesUpTest::RunTest(const FString& Parameters)
+{
+	FUndergroundControllerRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()) || !TestTrue(TEXT("down"), Rig.GoDown()))
+	{
+		return false;
+	}
+	// Away from the mouth first, so this is a click near the shaft top, not on the crab itself.
+	const FVector2D Upper = Rig.Colony->GetPlan().Nodes[1].Pos;
+	Rig.Crab->SetUndergroundTarget(Upper);
+	Rig.World.TickSeconds(3.f);
+
+	Rig.Controller->HandleUndergroundClick(*Rig.Crab, FVector2D(20.f, -20.f));
+	TestFalse(TEXT("not a dance"), Rig.Crab->IsDancing());
+	Rig.World.TickSeconds(4.f);
+	TestFalse(TEXT("back on the surface"), Rig.Crab->IsUnderground());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerUndergroundClickDigFaceDigsTest, "CrabSim.Controller.UndergroundClickNearTheDigFaceDigs", TestFlags)
+bool FCrabControllerUndergroundClickDigFaceDigsTest::RunTest(const FString& Parameters)
+{
+	FUndergroundControllerRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()) || !TestTrue(TEXT("down"), Rig.GoDown()))
+	{
+		return false;
+	}
+	const FVector2D Face = Rig.Colony->GetDigFacePos();
+	Rig.Controller->HandleUndergroundClick(*Rig.Crab, Face);
+	TestFalse(TEXT("not a dance"), Rig.Crab->IsDancing());
+	for (int32 Frame = 0; Frame < 600 && !Rig.Crab->IsCarryingPellet(); ++Frame)
+	{
+		Rig.World.TickN(1, 1.f / 60.f);
+	}
+	TestTrue(TEXT("walked to the face and dug a pellet"), Rig.Crab->IsCarryingPellet());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCrabControllerUndergroundClickFloorWalksTest, "CrabSim.Controller.UndergroundClickOnPlainFloorJustWalksThere", TestFlags)
+bool FCrabControllerUndergroundClickFloorWalksTest::RunTest(const FString& Parameters)
+{
+	FUndergroundControllerRig Rig;
+	if (!TestTrue(TEXT("rig"), Rig.IsValid()) || !TestTrue(TEXT("down"), Rig.GoDown()))
+	{
+		return false;
+	}
+	const FVector2D Target = Rig.Colony->GetPlan().Nodes[1].Pos;
+	Rig.Controller->HandleUndergroundClick(*Rig.Crab, Target);
+	TestFalse(TEXT("not a dance"), Rig.Crab->IsDancing());
+	TestTrue(TEXT("walking"), Rig.Crab->HasUndergroundTarget());
+	Rig.World.TickSeconds(4.f);
+	const float Distance = static_cast<float>(FVector2D::Distance(Rig.Crab->GetUndergroundUV(), Target));
+	TestTrue(*FString::Printf(TEXT("arrived (%.1f uu off)"), Distance), Distance < 5.f);
 	return true;
 }

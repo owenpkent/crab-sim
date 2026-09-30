@@ -254,6 +254,9 @@ player with no other input is built on top of it: see "One-stick mode" below.
 - Left click the HUD's molt button, in a burrow: molt for ten seconds. Same size, above the dig button. Click
   elsewhere to leave and cancel.
 - Left click NEW ROUND on the results panel: start again (after a win, or after being eaten).
+- Dug into burrow 0 (the colony's own, at the dune foot), the DIG button reads DOWN: takes the crab into the
+  colony's cutaway. Down there the FOOD button reads EAT and BURROW reads UP (see "Colony"): UP climbs back out to
+  burrow 0, dug in and peeking, exactly as before DOWN.
 - Left click the crab: dance on or off. Begun early enough, a dance scares off a gull.
 - A gull: no input of its own. The BURROW button is the answer, a dance begun in time the second. The banner and arrow
   are drawn only: neither takes a click, and a click under the arrow is an ordinary click.
@@ -368,6 +371,90 @@ What turns with the camera: the dance and the peek over a burrow keep facing it,
 the gull is on screen (foreshortened by the pitch), and one-stick STEER stays screen-relative. The orbit is kept
 from round to round. With `CrabSim.StateLog 1` every state line ends with `cam=<yaw> pitch=<pitch>`, and
 `orbit_start` and `orbit_end` events log both.
+
+## Colony (built)
+
+Under the burrow at the dune foot (burrow 0, the highest, which never floods) lives a colony of fiddler crabs, run
+like an ant colony. The player is still the one crab; the others are NPCs (non-playable crabs) with jobs of
+their own, and the game calls them that, with a straight face, wherever it names them. The colony is
+safe from the tide and the gull, keeps a store of food, digs itself bigger and grows as it is fed. Real fiddler
+crabs roll the sand they dig into little balls and carry them out of the hole, so the colony's work shows on the
+beach as a mound of sand pellets round its mouth that grows through the round.
+
+**Seeing it.** Dug into the colony burrow (burrow 0), the DIG button becomes DOWN. DOWN takes the crab into the
+colony, seen as a side cutaway like a glass ant farm: pale sand, dark tunnels and chambers, the surface as a strip
+across the top, the crabs walking in the tunnels facing the glass (a fiddler crab walks sideways, so it scuttles
+along a tunnel showing its claw). The beach, the sea and the gull are not drawn while the crab is down (the gull
+is suppressed outright, so it cannot stalk or catch what it cannot see); the tide and the gull go on up there, and
+the HUD's tide gauge still shows the water. The camera swings to a fixed side-on view along the cutaway's own
+`ViewDirection` (pitch 0), the arm let out to about 1400 uu and the crab framed left of centre so the HUD's
+FOOD/BURROW column does not sit over it, and it keeps following the crab with the usual camera lag. It does not
+orbit down here (a right drag does nothing, and there is no dash: `TryDash` refuses). Pitch, yaw, arm length and
+lag all come back exactly as they were on the way up. Underground is still a burrow the whole time (`IsInBurrow()`
+holds, `CurrentBurrow` stays 0), so the gull and tide rules up top keep treating the crab as safely dug in, and
+being eaten is not possible down here; water depth is 0 and grip is untouched, food drains as usual and the round
+clock runs, and molting works anywhere down here exactly as it does in any burrow. GoDown refuses if the crab is
+not dug into burrow 0, is molting, or is already down; GoUp walks to the entrance first if the crab is not already
+there (dropping a carried pellet on arrival), then climbs out to burrow 0 dug in and peeking, exactly as before
+DOWN. `CrabSim.StateLog 1` adds `under=`, `carry=` and `rolled=` to the end of every `CRABSIM_STATE` line.
+
+**Getting about.** A left click anywhere in the cutaway walks the crab to the nearest point of the tunnels and
+chambers, along them; holding left follows the cursor the same way. A click on the crab dances (and colony crabs
+close by wave back, `Colony->PlayerDanced`). The four HUD buttons take on colony meanings: FOOD becomes EAT (walk
+to the nearest open pantry and eat from the colony's store, disabled "store empty" when it is), BURROW becomes UP
+(walk to the entrance and climb out, dug into the colony burrow and peeking, exactly as before DOWN), DIG becomes
+"help dig" (walk to the tunnel being dug and help: the player digs faster than an NPC, disabled "all dug" once the
+plan is finished and "carry it up" while a pellet is already held), and MOLT molts where the crab stands (down
+here counts as in a burrow, so the usual food and burrow rules apply unchanged). Clicking within 120 uu of the top
+of the entrance shaft goes up too, and clicking within 120 uu of the dig face digs, the same as their buttons.
+While carrying a pellet, a plain click on the floor still just walks there; a click on the crab itself sets the
+pellet down at its feet instead of dancing. Priority on a click: the crab, then a loose pellet within 60 uu (only
+while the crab's hands are free), then the shaft top, then the dig face, otherwise plain ground. One-stick mode:
+the MENU items do what the buttons do (FOOD/BURROW/DIG take their colony meanings; DASH is refused, same as the
+right button), and STEER walks the tunnels in the stick's direction (stick up is up the cutaway, `+V`; right is
+`+U`), landing on the nearest reachable point of the plan.
+
+**The colony.** A plan of tunnels and chambers under the burrow (`CrabColony::DefaultBlueprint` in
+`Source/CrabSim/CrabColonyMath.h`): an entrance shaft, a pantry and a rest chamber already dug, then a nursery,
+more rest chambers, a deeper junction and a second pantry, dug in that order. It starts with 4 crabs and a little
+food in store. Each colony crab picks a job whenever it finishes one, like an ant: forage when the store is low,
+the tide is low enough to reach a food patch and there is no gull down; dig while any of the plan is left; rest
+otherwise. A digger works the tunnel end, and every bit it digs becomes a sand pellet it carries up and drops at
+the mouth before going back down. A forager climbs out, walks to a food patch, sifts it (taking a little of the
+patch, so the colony and the player share the flats), and carries the food down to a pantry. Foragers run home
+when the water comes near or a gull lands. Once the nursery is dug, food in store hatches new crabs, small at
+first, up to a cap set by how many rest chambers there are. Everything resets with NEW ROUND.
+
+**Rolling pellets.** The player rolls sand too. Digging at the face (DIG, or a click within 120 uu of the face)
+digs at the player's rate, and every 40 uu of sand becomes a pellet (`CrabColony::PelletsFor`, the player's own
+carry, separate from an NPC digger's) the crab holds in front of its claws (`UCrabCarryComponent`). It holds one
+at a time: digging pauses while it carries one, and the DIG button and the hint say to carry it up. Walking to
+the entrance and going UP, or clicking within 120 uu of the top of the shaft, drops it on the mound at the mouth
+(`Colony->AddMoundPellet(TEXT("player"))`, which logs `colony_pellet who=player` itself) and counts it in
+`GetPelletsRolled()`, shown as "Pellets rolled" on the results panel. A click on the crab itself while carrying
+sets the pellet down on the tunnel floor at its feet instead of dancing (`AddLoosePellet`); a click within 60 uu
+of a loose pellet while the crab's hands are free picks it back up. On the beach, the crab's work leaves pellets
+as well: digging a burrow (the DIG button's four seconds) scatters a ring of pellets round the new hole
+(`ScatterBurrowPellets`), and sifting a food patch leaves a trail of small feeding pellets behind the crab every
+3 s (`DropFeedingPellet`), the way a fiddler flat looks at low tide. Those beach-side ones are drawn only; nothing
+picks them up, and the tide washes them away when it covers them.
+
+**Why go down.** At high tide the flats are under water and there is nothing to eat up top; the colony's store is
+food the NPCs gathered at low tide. Down there the crab is safe from the gull and the sea, can molt, and can help
+the colony dig so it grows faster.
+
+**Built in this order.** Pure rules first (`CrabColonyMath.h`: the plan, paths, the nearest point on the tunnels,
+digging, job choice, hatching), unit tested; the cutaway's look and the colony crab's body next; then the colony
+actor that runs it all, the player going down and up, the HUD and the `colony` live scenario (`Scripts/live-test.sh`,
+`Scripts/live/session.py`) and tour (`RECORD_TOUR=colony Scripts/record.sh`). With `CrabSim.StateLog 1` a
+`CRABSIM_COLONY` line logs the colony's own state every second (population, food in store over capacity, the
+active dig edge and how far into it, the mound, who is on the surface and each job's headcount), and
+`colony_enter`/`colony_exit` (`ACrabColony::SetPlayerUnderground`, on a real transition), `colony_dug`,
+`colony_hatch`, `colony_eat` (`amount=`/`store=`, from the player eating at a pantry, logged every tick it takes
+any food), `colony_forage` (a returning forager banking food in a pantry) and `colony_pellet` (`who=player` or
+`who=npc`) events mark what happens. The HUD shows a small "COLONY"
+panel top centre while the crab is down (population, food in store over capacity, and the mound), and the results
+panel's "Pellets rolled" counts the player's own.
 
 ## Movement
 
