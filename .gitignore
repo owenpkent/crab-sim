@@ -105,5 +105,5 @@ Thumbs.db
 /videos/*.mp4
 /videos/*.events.txt
 
-# Per-session agent worktrees. Local-only working copies, never shared state.
+# Local-only working copies.
 /.claude/worktrees/
