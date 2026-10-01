@@ -104,3 +104,6 @@ Thumbs.db
 # Recorded tours (Scripts/record.sh). Local only; never commit videos.
 /videos/*.mp4
 /videos/*.events.txt
+
+# Local-only working copies.
+/.claude/worktrees/

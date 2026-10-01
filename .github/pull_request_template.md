@@ -31,8 +31,13 @@ say what you looked at (screenshot path, log line) instead of "works".
 - [ ] `Scripts/build.sh` succeeds
 - [ ] `Scripts/test.sh` passes
 - [ ] Added or updated automation tests (pure rules go in `CrabMovementMath` style headers so they test without a world)
-- [ ] `Scripts/live-test.sh` passes (real game, real pointer)
+- [ ] `Scripts/live-test.sh` passes (real game, real pointer), for anything touching input, camera, HUD, or the state log
+- [ ] `RECORD_TOUR=<name> Scripts/record.sh` run and the mp4 + `.events.txt` committed, for anything that changes a look
 - [ ] Played it, not just ran the tests
+
+## Docs
+
+- [ ] `GAME.md` (design) and `README.md` (controls/layout) updated in this PR if this changes either
 
 ## Accessibility check
 
