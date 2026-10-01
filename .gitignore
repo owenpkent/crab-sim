@@ -104,3 +104,6 @@ Thumbs.db
 # Recorded tours (Scripts/record.sh). Local only; never commit videos.
 /videos/*.mp4
 /videos/*.events.txt
+
+# Per-session agent worktrees. Local-only working copies, never shared state.
+/.claude/worktrees/

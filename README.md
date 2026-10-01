@@ -2,7 +2,7 @@
 
 A crab simulator game. You are a crab. Scuttle, dig, pinch, molt, survive the tide.
 
-Unreal Engine 5.8, C++. Design brief in `GAME.md`.
+Unreal Engine 5.8, C++. Design brief in `GAME.md`. Contributing: `CONTRIBUTING.md`.
 
 ## Status
 
